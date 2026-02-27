@@ -1,6 +1,6 @@
 import copy
 import threading
-from queue import Queue
+from queue import Queue, Full
 
 from utils.utils_graph import check_progress
 
@@ -28,11 +28,7 @@ class Human_agent:
         # signals the GUI that a new observation is ready to display.
         self._obs_ready = threading.Event()
 
-        # prevents double-submissions of actions.
-        self._step_lock = threading.Lock()
-
         # Latest observation snapshot.
-        self._obs_lock = threading.RLock()
         self._latest_obs: dict | None = None
 
         # Set by the arena
@@ -46,15 +42,8 @@ class Human_agent:
         except Exception:
             pass
 
-        if self._step_lock.locked():
-            try:
-                self._step_lock.release()
-            except RuntimeError:
-                pass
-
         self._obs_ready.clear()
-        with self._obs_lock:
-            self._latest_obs = None
+        self._latest_obs = None
 
     def get_action(self, obs: dict) -> tuple[str, dict]:
         """
@@ -64,19 +53,11 @@ class Human_agent:
         Returns:
             (action_str, agent_info_dict)
         """
-        # Release the step lock so a new submit_action call can proceed.
-        if self._step_lock.locked():
-            try:
-                self._step_lock.release()
-            except RuntimeError:
-                pass
-
         # save the latest observation
-        with self._obs_lock:
-            self._latest_obs = copy.deepcopy(obs)
+        self._latest_obs = copy.deepcopy(obs)
         self._obs_ready.set()
 
-        # blocks until the GUI delivers an action.
+        # blocks until the GUI delivers an action
         action_str = self._action_queue.get()
 
         self._obs_ready.clear()
@@ -99,28 +80,11 @@ class Human_agent:
         Returns True if accepted, False if a submission is already pending.
         """
         # If it is held, this step has a pending action.
-        if not self._step_lock.acquire(blocking=False):
-            return False
-
         try:
             self._action_queue.put_nowait(action_str)
             return True
-        except Exception:
-            self._step_lock.release()
+        except Full:
             return False
-
-    def get_obs_snapshot(self) -> dict | None:
-        """
-        Return the most recent observation.
-        """
-        with self._obs_lock:
-            if self._latest_obs is None:
-                return None
-            return copy.deepcopy(self._latest_obs)
-
-    def is_obs_ready(self) -> bool:
-        """True when a fresh observation is waiting for the GUI."""
-        return self._obs_ready.is_set()
 
     def get_action_history(self) -> list[str | None]:
         """Return the action history for this agent (human = char_index 0 or 1)."""

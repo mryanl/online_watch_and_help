@@ -399,7 +399,7 @@ class Saver:
         eg = EG(graph)
         for agent_id in range(len(actions)):
             hands_objects = [(n.id, n.class_name) for n in eg[agent_id + 1].holds()]
-            if len(hands_objects) >= 2:
+            if len(hands_objects) >= 2 and agent_info[agent_id]["agent_type"] != "Human":
                 raise DoubleGrabException(f"Agent {agent_id}: {hands_objects}")
             hands[agent_id] = hands_objects
         saved_info["hands"].append(hands)

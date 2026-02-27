@@ -88,10 +88,14 @@ def _encode_image(np_img) -> str:
 
 
 class HumanServer:
-    def __init__(self, arena: "Arena", human_agent: "Human_agent", env: "UnityEnvironment"):
-        self.arena = arena
+    def __init__(self, runner, human_agent: "Human_agent"):
+        self.runner = runner
+
+        self.args = runner.args
+
+        self.arena: "Arena" = runner.arena
         self.human_agent = human_agent
-        self.env = env
+        self.env: "UnityEnvironment" = runner.env
 
         self.app = Flask(__name__, template_folder="templates", static_folder="static")
         self._register_routes()
@@ -150,7 +154,9 @@ class HumanServer:
                 "done":    {"<obj_class>": int, ...},
                 "holding": {"<obj_class>": int, ...}
               },
-              "episode_done": bool
+              "episode_done": bool,
+              "episode_id": int,
+              "total_episodes": int
             }
             """
             progress = self.human_agent.get_progress()
@@ -186,6 +192,8 @@ class HumanServer:
                 "goals": goals_out,
                 "progress": progress,
                 "episode_done": False,
+                "episode_id": self.arena.saver.episode_id,
+                "total_episodes": len(self.args.episode_ids)
             })
 
         @app.route("/api/image", methods=["GET"])

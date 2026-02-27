@@ -344,19 +344,17 @@
 
       #image-container {
         flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
         position: relative;
         overflow: hidden;
       }
 
       #main-image {
-        max-width: 100%;
-        max-height: 100%;
-        object-fit: contain;
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: fill;
         display: block;
-        border-radius: 4px;
       }
 
       #image-overlay {
@@ -375,30 +373,6 @@
       }
       #image-overlay.hidden {
         opacity: 0;
-      }
-
-      /* Keyboard shortcuts overlay */
-      #shortcut-hint {
-        position: absolute;
-        bottom: 10px;
-        right: 10px;
-        font-family: var(--mono);
-        font-size: 10px;
-        color: var(--text-dim);
-        background: rgba(13, 15, 20, 0.75);
-        padding: 6px 10px;
-        border-radius: var(--radius);
-        border: 1px solid var(--border);
-        line-height: 1.7;
-      }
-      .kbd {
-        display: inline-block;
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 3px;
-        padding: 0 4px;
-        font-size: 9px;
-        color: var(--text-mid);
       }
 
       /* ── Right panel: objects + actions ─────────────────────────────── */
@@ -783,6 +757,13 @@
       </div>
       <div class="topbar-divider"></div>
       <div class="topbar-stat">
+        <span class="label">Episode</span>
+        <span class="value" id="tb-episode">—</span>
+        <span style="color: var(--text-dim); font-size: 11px">/</span>
+        <span class="value" id="tb-total-episodes">—</span>
+      </div>
+      <div class="topbar-divider"></div>
+      <div class="topbar-stat">
         <span id="status-indicator" class="waiting"></span>
         <span class="value" id="tb-status">Connecting…</span>
       </div>
@@ -852,12 +833,6 @@
         <div id="image-container">
           <img id="main-image" src="" alt="Agent viewport" />
           <div id="image-overlay">Waiting for frame…</div>
-          <div id="shortcut-hint">
-            <span class="kbd">W</span> Walk fwd &nbsp;
-            <span class="kbd">←→</span> Turn<br />
-            <span class="kbd">R</span> Refresh &nbsp;
-            <span class="kbd">Esc</span> Deselect
-          </div>
         </div>
       </section>
 
@@ -997,7 +972,12 @@
       // ── Image refresh ──────────────────────────────────────────────────────
       async function refreshImage() {
         try {
-          const { images } = await apiGet("/api/image?width=600&height=338");
+          const MAX_W = 600,
+            MAX_H = 600;
+          const container = document.getElementById("image-container");
+          const w = Math.min(container.clientWidth || MAX_W, MAX_W);
+          const h = Math.min(container.clientHeight || MAX_H, MAX_H);
+          const { images } = await apiGet(`/api/image?width=${w}&height=${h}`);
           const img = document.getElementById("main-image");
           const overlay = document.getElementById("image-overlay");
           if (images && images.length > 0) {
@@ -1216,6 +1196,10 @@
         document.getElementById("tb-step").textContent = task.step ?? 0;
         document.getElementById("tb-maxstep").textContent =
           task.max_steps ?? "—";
+        document.getElementById("tb-episode").textContent =
+          task.episode_id != null ? task.episode_id + 1 : "—";
+        document.getElementById("tb-total-episodes").textContent =
+          task.total_episodes ?? "—";
 
         const goalList = document.getElementById("goal-list");
         goalList.innerHTML = "";
@@ -1290,29 +1274,6 @@
             );
             ac.appendChild(btn);
           }
-        }
-
-        // If holding something and item is close, offer putback on its surface parent
-        if (
-          obj.is_close &&
-          lastState?.held_objects?.length > 0 &&
-          obj.walk_to_class &&
-          !obj.actions.includes("putin") &&
-          !obj.actions.includes("putback")
-        ) {
-          const btn = makeActionBtn(
-            "putback",
-            `put on ${obj.walk_to_class}`,
-            () =>
-              submitAction(
-                "putback",
-                lastState.held_objects[0].id,
-                lastState.held_objects[0].class_name,
-                obj.walk_to_id,
-                obj.walk_to_class,
-              ),
-          );
-          ac.appendChild(btn);
         }
       }
 
@@ -1397,12 +1358,16 @@
         const canGrab = held.length < 2;
         const isClose = obj.is_close;
         const isOpen = obj.is_open;
-        // For surfaces there's no open/closed — items are always accessible when close
-        const accessible = isClose && (obj.is_surface || isOpen);
+        // Dual container+surface (e.g. kitchencabinet) is treated as container-only:
+        // items are only accessible when the furniture is close AND open.
+        // Pure surfaces have no open/closed state — items are always accessible when close.
+        const isDual = obj.is_container && obj.is_surface;
+        const accessible =
+          isClose && (!obj.is_container && obj.is_surface ? true : isOpen);
 
         // Header: show count and open/closed hint
         let hint = "";
-        if (obj.is_container && !obj.is_surface) {
+        if (obj.is_container) {
           hint = isOpen ? " (open)" : " (closed — open first to grab)";
         }
         header.textContent = `Contents · ${contents.length} item${contents.length !== 1 ? "s" : ""}${hint}`;
@@ -1729,6 +1694,16 @@
         setStatus("waiting", "Connecting…");
         await refreshAll();
         startPolling();
+
+        // Re-fetch image whenever the viewport panel is resized
+        let resizeTimer;
+        const ro = new ResizeObserver(() => {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => {
+            if (!isSubmitting) refreshImage();
+          }, 150);
+        });
+        ro.observe(document.getElementById("image-container"));
       });
     </script>
   </body>

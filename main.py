@@ -223,7 +223,7 @@ if __name__ == "__main__":
 
     if any(a.agent_type == "Human" for a in runner.agents):
         human_agent = next(a for a in runner.agents if a.agent_type == "Human")
-        server = HumanServer(runner.arena, human_agent, runner.env)
+        server = HumanServer(runner, human_agent)
         t = threading.Thread(
             target=server.run,
             kwargs={"host": "0.0.0.0", "port": runner.args.portflask, "debug":True},

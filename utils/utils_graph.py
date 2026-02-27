@@ -439,7 +439,7 @@ class GN(GraphNode):
                     actions.append("close" if self.is_open else "open")
                     if held_ids and self.is_open:
                         actions.append("putin")
-                if self.is_surface and held_ids:
+                if self.is_surface and not self.is_container and held_ids:
                     actions.append("putback")
                 if self.is_grabbable and can_grab_more:
                     actions.append("grab")
@@ -485,7 +485,7 @@ class GN(GraphNode):
                         "is_grabbable": child.is_grabbable,
                         "relation":     "inside",
                     })
-            if self.is_surface:
+            if self.is_surface and not self.is_container:
                 for child in self.supports():
                     contents.append({
                         "id":           child.id,
@@ -893,7 +893,7 @@ class EG(EnvironmentGraph):
                         d = child.to_gui_dict(agent, held_ids)
                         items.append(d)
 
-            if node.is_surface:
+            if node.is_surface and not node.is_container:
                 for child in node.supports():
                     if child.is_grabbable and child.id not in seen_item_ids and child.id not in held_ids:
                         seen_item_ids.add(child.id)

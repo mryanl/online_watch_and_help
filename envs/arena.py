@@ -69,11 +69,13 @@ class Arena(object):
                         # * than `self.env.task_goal`
                         goal_spec=self.env.goal_spec[it],
                     )
+
                 case "GnP" | "Human":
                     # * agent will collect info from `saver`
                     actions[it], agents_info[it] = agent.get_action(obs=obs[it])
                 case _:
                     raise ValueError(f"Invalid agent type: {agent.agent_type}")
+            agents_info[it]['agent_type'] = agent.agent_type
 
         return actions, agents_info
 
