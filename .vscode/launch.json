@@ -25,7 +25,7 @@
         "--num_runs=3",
         // "--obs_type=partial"
         "--debug"
-        // "--episode_ids=0"
+        // "--episode_ids=0
       ],
       "preLaunchTask": "clear :28488"
     },
@@ -96,13 +96,13 @@
         "--num_agents=2",
         "--helper_goal_type=gt",
         // "--helper_goal_type=random",
-        "--base_port=18688",
+        "--base_port=28688",
         "--num_runs=1",
         "--debug"
         // "--episode_ids=0",
         // "--max_steps=50",
       ],
-      "preLaunchTask": "clear :18688"
+      "preLaunchTask": "clear :28688"
     },
     {
       "name": "main | human-llm",
@@ -133,6 +133,39 @@
         // "--max_steps=50",
       ],
       "preLaunchTask": "clear :28588"
+    },
+    {
+      "name": "main | real human",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "main.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--helper_class=Human",
+        // * visual
+        "--save_camera_views=all",
+        "--image_width=640",
+        "--image_height=480",
+        "--executable_file=../virtualhome/unity/macos_exec.2.2.4.app",
+        // "--dataset_path=./dataset/train-2_per_apt-task_no_tv-apts_0,1,2,4,5-subset_20.pik",
+        "--dataset_path=./dataset/test-2_per_apt-task_no_tv-apts_3,6.pik",
+        "--num_agents=2",
+        "--base_port=28788",
+        "--num_runs=1",
+        "--debug"
+        // "--save_camera_views=all",
+        // "--image_width=1280",
+        // "--image_height=960"
+        // "--episode_ids=0",
+        // "--max_steps=50",
+      ],
+      "preLaunchTask": "clear :28788"
     },
     {
       "name": "AutoToM_prompts",

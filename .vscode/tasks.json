@@ -30,11 +30,6 @@
     },
     {
       "type": "shell",
-      "label": "clear :28588",
-      "command": "lsof -i :28588 -t | xargs -r kill -9"
-    },
-    {
-      "type": "shell",
       "label": "clear :28688",
       "command": "lsof -i :28688 -t | xargs -r kill -9"
     },
