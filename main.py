@@ -1,8 +1,11 @@
 import pickle
 from pathlib import Path
+import threading
+from contextlib import nullcontext
 
+from human_server import HumanServer
 from agents.GnP_agent import GnP_agent
-from agents.Human_agent import Human_agent
+from agents.Human_agent import Human_agent, HumanResetRequest
 from agents.MCTS_agent import MCTS_agent
 from arguments import get_args
 from envs.arena import Arena
@@ -20,6 +23,7 @@ class Runner:
         self._get_agents()
         self._get_env()
         self.arena = Arena(self.env, self.agents, self.saver)
+
 
     def _get_saver(self):
         if self.args.num_agents == 1:
@@ -196,6 +200,10 @@ class Runner:
                                 success = self.arena.run()
                                 if success:
                                     break
+                            except HumanResetRequest:
+                                self.saver.warning("Human requested reset — restarting episode")
+                                self.saver.remove_pbar_task("step")
+                                continue
 
                             except Exception as e:
                                 e = check_unity_error(e)
@@ -212,4 +220,16 @@ class Runner:
 
 if __name__ == "__main__":
     runner = Runner(args=get_args())
+
+    if any(a.agent_type == "Human" for a in runner.agents):
+        human_agent = next(a for a in runner.agents if a.agent_type == "Human")
+        server = HumanServer(runner.arena, human_agent, runner.env)
+        t = threading.Thread(
+            target=server.run,
+            kwargs={"host": "0.0.0.0", "port": runner.args.portflask, "debug":True},
+            daemon=True,
+        )
+        t.start()
+        print(f"Human GUI available at http://localhost:{runner.args.portflask}")
+
     runner.run()

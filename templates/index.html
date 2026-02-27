@@ -1,0 +1,1735 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VirtualHome Controller</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /* ── Design tokens ─────────────────────────────────────────────── */
+      :root {
+        --bg: #0d0f14;
+        --panel: #141720;
+        --panel-alt: #1a1e2b;
+        --border: #252a38;
+        --accent: #4f8ef7;
+        --accent-dim: #2a4a8a;
+        --green: #3ecf8e;
+        --amber: #f5a623;
+        --red: #e05c5c;
+        --text: #e2e6f0;
+        --text-mid: #8892a4;
+        --text-dim: #4a5265;
+        --mono: "Space Mono", monospace;
+        --sans: "DM Sans", sans-serif;
+        --radius: 6px;
+        --radius-lg: 10px;
+        --transition: 0.15s ease;
+      }
+
+      /* ── Reset ──────────────────────────────────────────────────────── */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        font-family: var(--sans);
+        background: var(--bg);
+        color: var(--text);
+        display: grid;
+        grid-template-rows: 48px 1fr;
+        grid-template-columns: 1fr;
+        overflow: hidden;
+        height: 100vh;
+      }
+
+      /* ── Top bar ────────────────────────────────────────────────────── */
+      #topbar {
+        grid-row: 1;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        gap: 20px;
+        z-index: 100;
+      }
+
+      #topbar h1 {
+        font-family: var(--mono);
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--accent);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .topbar-divider {
+        width: 1px;
+        height: 20px;
+        background: var(--border);
+      }
+
+      .topbar-stat {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+      }
+      .topbar-stat .label {
+        color: var(--text-dim);
+        font-family: var(--mono);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .topbar-stat .value {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text);
+      }
+
+      #status-indicator {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--text-dim);
+        transition: background var(--transition);
+      }
+      #status-indicator.waiting {
+        background: var(--amber);
+        animation: pulse 1.4s infinite;
+      }
+      #status-indicator.ready {
+        background: var(--green);
+      }
+      #status-indicator.error {
+        background: var(--red);
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.35;
+        }
+      }
+
+      .spacer {
+        flex: 1;
+      }
+
+      #btn-reset {
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--red);
+        background: transparent;
+        border: 1px solid var(--red);
+        border-radius: var(--radius);
+        padding: 4px 12px;
+        cursor: pointer;
+        transition:
+          background var(--transition),
+          color var(--transition);
+      }
+      #btn-reset:hover {
+        background: var(--red);
+        color: #fff;
+      }
+      #btn-reset:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+
+      /* ── Main layout ────────────────────────────────────────────────── */
+      #main {
+        grid-row: 2;
+        display: grid;
+        grid-template-columns: 280px 1fr 420px;
+        grid-template-rows: 1fr;
+        overflow: hidden;
+      }
+
+      /* ── Shared panel styles ────────────────────────────────────────── */
+      .panel {
+        border-right: 1px solid var(--border);
+        overflow-y: auto;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .panel:last-child {
+        border-right: none;
+      }
+
+      .panel-section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+      }
+
+      .section-header {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel-alt);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .section-body {
+        padding: 10px 12px;
+      }
+
+      /* ── Left panel: navigation + task ──────────────────────────────── */
+      #panel-left {
+        background: var(--panel-alt);
+      }
+
+      /* Room buttons */
+      #room-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .room-btn {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-mid);
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 7px 10px;
+        cursor: pointer;
+        text-align: left;
+        transition:
+          background var(--transition),
+          color var(--transition),
+          border-color var(--transition);
+        width: 100%;
+      }
+      .room-btn:hover {
+        background: var(--accent-dim);
+        color: var(--text);
+        border-color: var(--accent-dim);
+      }
+      .room-btn.active {
+        background: var(--accent-dim);
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+
+      /* Task goals */
+      #goal-list {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .goal-item {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        font-size: 12px;
+      }
+      .goal-label {
+        color: var(--text-mid);
+      }
+      .goal-progress-bar {
+        height: 4px;
+        background: var(--border);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .goal-progress-fill {
+        height: 100%;
+        background: var(--green);
+        border-radius: 2px;
+        transition: width 0.4s ease;
+      }
+      .goal-counts {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text-dim);
+      }
+      .goal-item.complete .goal-label {
+        color: var(--green);
+      }
+      .goal-item.complete .goal-progress-fill {
+        background: var(--green);
+      }
+
+      /* Held objects */
+      #held-display {
+        font-size: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .held-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        background: var(--panel-alt);
+        border: 1px solid var(--accent-dim);
+        border-radius: 4px;
+        padding: 3px 8px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--accent);
+      }
+      .held-empty {
+        color: var(--text-dim);
+        font-style: italic;
+        font-size: 12px;
+      }
+
+      /* ── Centre panel: viewport ─────────────────────────────────────── */
+      #panel-centre {
+        background: #08090d;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border-right: 1px solid var(--border);
+      }
+
+      #viewport-header {
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--border);
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text-dim);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--panel);
+      }
+      #viewport-header .room-tag {
+        font-size: 11px;
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      #image-container {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        overflow: hidden;
+      }
+
+      #main-image {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        display: block;
+        border-radius: 4px;
+      }
+
+      #image-overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(13, 15, 20, 0.65);
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text-dim);
+        letter-spacing: 0.05em;
+        transition: opacity 0.3s;
+        pointer-events: none;
+      }
+      #image-overlay.hidden {
+        opacity: 0;
+      }
+
+      /* Keyboard shortcuts overlay */
+      #shortcut-hint {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text-dim);
+        background: rgba(13, 15, 20, 0.75);
+        padding: 6px 10px;
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        line-height: 1.7;
+      }
+      .kbd {
+        display: inline-block;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 0 4px;
+        font-size: 9px;
+        color: var(--text-mid);
+      }
+
+      /* ── Right panel: objects + actions ─────────────────────────────── */
+      #panel-right {
+        background: var(--panel-alt);
+      }
+
+      /* Object tabs: grabbable / containers */
+      .obj-tab-bar {
+        display: flex;
+        border-bottom: 1px solid var(--border);
+      }
+      .obj-tab {
+        flex: 1;
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        text-align: center;
+        padding: 7px 4px;
+        cursor: pointer;
+        color: var(--text-dim);
+        border-bottom: 2px solid transparent;
+        transition:
+          color var(--transition),
+          border-color var(--transition);
+      }
+      .obj-tab.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+
+      #object-tabs-content {
+        padding: 8px;
+      }
+
+      .obj-list {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      /* Row wrapper: main button + inline walk arrow */
+      .obj-row {
+        display: flex;
+        gap: 4px;
+        align-items: stretch;
+      }
+      .obj-row .obj-btn {
+        flex: 1;
+        min-width: 0;
+      }
+
+      /* Inline walktowards arrow button */
+      .inline-walk {
+        flex-shrink: 0;
+        padding: 4px 10px !important;
+        font-size: 14px !important;
+        letter-spacing: 0 !important;
+        border-radius: var(--radius) !important;
+        align-self: stretch;
+        display: flex;
+        align-items: center;
+      }
+
+      /* Close proximity highlight */
+      .obj-btn.obj-close {
+        border-color: var(--accent-dim);
+        background: rgba(79, 142, 247, 0.06);
+      }
+
+      .obj-btn {
+        width: 100%;
+        text-align: left;
+        font-size: 12px;
+        font-family: var(--mono);
+        color: var(--text-mid);
+        background: transparent;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 6px 9px;
+        cursor: pointer;
+        transition:
+          background var(--transition),
+          border-color var(--transition),
+          color var(--transition);
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 3px;
+      }
+      .obj-btn .obj-name {
+        width: 100%;
+        word-break: break-word;
+        white-space: normal;
+        line-height: 1.3;
+      }
+      .obj-btn .obj-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px;
+      }
+      .badge {
+        font-size: 9px;
+        font-family: var(--mono);
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .badge-close {
+        background: rgba(79, 142, 247, 0.15);
+        color: var(--accent);
+      }
+      .badge-open {
+        background: rgba(62, 207, 142, 0.15);
+        color: var(--green);
+      }
+      .badge-held {
+        background: rgba(245, 166, 35, 0.15);
+        color: var(--amber);
+      }
+
+      .obj-btn:hover,
+      .obj-btn.selected {
+        background: var(--panel);
+        border-color: var(--accent-dim);
+        color: var(--text);
+      }
+      .obj-btn.selected {
+        border-color: var(--accent);
+      }
+
+      .empty-list {
+        font-size: 12px;
+        color: var(--text-dim);
+        font-style: italic;
+        padding: 8px 2px;
+      }
+
+      /* Action buttons */
+      #action-panel {
+        border-top: 1px solid var(--border);
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+
+      #selected-object-name {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-mid);
+        padding: 2px 0;
+        min-height: 18px;
+      }
+
+      #action-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+
+      .action-btn {
+        font-family: var(--mono);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        border-radius: var(--radius);
+        padding: 6px 12px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition:
+          background var(--transition),
+          color var(--transition),
+          border-color var(--transition),
+          opacity var(--transition);
+      }
+
+      /* Action colour coding */
+      .action-btn[data-action="walktowards"] {
+        background: var(--accent-dim);
+        color: var(--accent);
+        border-color: var(--accent-dim);
+      }
+      .action-btn[data-action="grab"] {
+        background: rgba(62, 207, 142, 0.12);
+        color: var(--green);
+        border-color: rgba(62, 207, 142, 0.3);
+      }
+      .action-btn[data-action="open"],
+      .action-btn[data-action="close"] {
+        background: rgba(245, 166, 35, 0.12);
+        color: var(--amber);
+        border-color: rgba(245, 166, 35, 0.3);
+      }
+      .action-btn[data-action="putback"],
+      .action-btn[data-action="putin"] {
+        background: rgba(224, 92, 92, 0.12);
+        color: var(--red);
+        border-color: rgba(224, 92, 92, 0.3);
+      }
+      .action-btn[data-action="switchon"],
+      .action-btn[data-action="switchoff"] {
+        background: rgba(79, 142, 247, 0.12);
+        color: #9ec2ff;
+        border-color: rgba(79, 142, 247, 0.3);
+      }
+
+      .action-btn:hover {
+        filter: brightness(1.25);
+      }
+      .action-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+        filter: none;
+      }
+
+      /* Target selection prompt */
+      #target-prompt {
+        font-size: 12px;
+        color: var(--amber);
+        font-family: var(--mono);
+        padding: 4px 0;
+        display: none;
+      }
+      #target-prompt.visible {
+        display: block;
+      }
+
+      /* Furniture contents panel */
+      #furniture-contents {
+        display: none;
+        flex-direction: column;
+        gap: 4px;
+        border-top: 1px solid var(--border);
+        padding-top: 8px;
+        margin-top: 4px;
+        min-height: 0;
+      }
+      #furniture-contents.visible {
+        display: flex;
+      }
+      #furniture-contents-header {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        margin-bottom: 2px;
+        flex-shrink: 0;
+      }
+      #furniture-contents-list {
+        overflow-y: auto;
+        max-height: 180px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .content-item-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-mid);
+        padding: 3px 6px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--panel);
+      }
+      .content-item-row .content-item-name {
+        flex: 1;
+        word-break: break-word;
+      }
+      .content-item-relation {
+        font-size: 9px;
+        color: var(--text-dim);
+        flex-shrink: 0;
+      }
+      .content-grab-btn {
+        font-family: var(--mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        padding: 2px 8px;
+        border-radius: var(--radius);
+        cursor: pointer;
+        border: 1px solid rgba(62, 207, 142, 0.3);
+        background: rgba(62, 207, 142, 0.1);
+        color: var(--green);
+        flex-shrink: 0;
+        transition: filter var(--transition);
+      }
+      .content-grab-btn:hover {
+        filter: brightness(1.3);
+      }
+      .content-grab-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+        filter: none;
+      }
+      .content-item-row.not-grabbable {
+        opacity: 0.5;
+      }
+
+      /* ── Feedback toast ─────────────────────────────────────────────── */
+      #toast {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%) translateY(60px);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 8px 18px;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text-mid);
+        opacity: 0;
+        transition:
+          transform 0.25s ease,
+          opacity 0.25s ease;
+        pointer-events: none;
+        z-index: 1000;
+        max-width: 380px;
+        text-align: center;
+      }
+      #toast.show {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1;
+      }
+      #toast.success {
+        border-color: var(--green);
+        color: var(--green);
+      }
+      #toast.error {
+        border-color: var(--red);
+        color: var(--red);
+      }
+      #toast.warn {
+        border-color: var(--amber);
+        color: var(--amber);
+      }
+
+      /* ── Scrollbar ──────────────────────────────────────────────────── */
+      ::-webkit-scrollbar {
+        width: 5px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- ── Top bar ─────────────────────────────────────────────────────── -->
+    <header id="topbar">
+      <h1>VH&nbsp;Controller</h1>
+      <div class="topbar-divider"></div>
+
+      <div class="topbar-stat">
+        <span class="label">Task</span>
+        <span class="value" id="tb-task">—</span>
+      </div>
+      <div class="topbar-divider"></div>
+      <div class="topbar-stat">
+        <span class="label">Step</span>
+        <span class="value" id="tb-step">0</span>
+        <span style="color: var(--text-dim); font-size: 11px">/</span>
+        <span class="value" id="tb-maxstep">—</span>
+      </div>
+      <div class="topbar-divider"></div>
+      <div class="topbar-stat">
+        <span id="status-indicator" class="waiting"></span>
+        <span class="value" id="tb-status">Connecting…</span>
+      </div>
+
+      <div class="spacer"></div>
+      <button id="btn-reset" onclick="requestReset()">↺ Reset</button>
+    </header>
+
+    <!-- ── Main 3-column layout ───────────────────────────────────────── -->
+    <main id="main">
+      <!-- LEFT: Navigation + Task panel -->
+      <aside class="panel" id="panel-left">
+        <!-- Current room -->
+        <div class="panel-section">
+          <div class="section-header">📍 Location</div>
+          <div class="section-body">
+            <span
+              id="current-room-label"
+              style="
+                font-family: var(--mono);
+                font-size: 13px;
+                color: var(--accent);
+              "
+              >—</span
+            >
+          </div>
+        </div>
+
+        <!-- Room navigation -->
+        <div class="panel-section">
+          <div class="section-header">🚶 Navigate to room</div>
+          <div class="section-body">
+            <div id="room-buttons">
+              <span class="empty-list">Loading rooms…</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Held objects -->
+        <div class="panel-section">
+          <div class="section-header">✋ Holding</div>
+          <div class="section-body">
+            <div id="held-display">
+              <span class="held-empty">Nothing</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Task goals -->
+        <div class="panel-section">
+          <div class="section-header">🎯 Goals</div>
+          <div class="section-body" id="goal-section">
+            <ul id="goal-list">
+              <li class="empty-list">Loading…</li>
+            </ul>
+          </div>
+        </div>
+      </aside>
+
+      <!-- CENTRE: Camera viewport -->
+      <section id="panel-centre">
+        <div id="viewport-header">
+          <span>Agent view</span>
+          <span class="room-tag" id="vp-room">—</span>
+        </div>
+
+        <div id="image-container">
+          <img id="main-image" src="" alt="Agent viewport" />
+          <div id="image-overlay">Waiting for frame…</div>
+          <div id="shortcut-hint">
+            <span class="kbd">W</span> Walk fwd &nbsp;
+            <span class="kbd">←→</span> Turn<br />
+            <span class="kbd">R</span> Refresh &nbsp;
+            <span class="kbd">Esc</span> Deselect
+          </div>
+        </div>
+      </section>
+
+      <!-- RIGHT: Objects + Actions panel -->
+      <aside class="panel" id="panel-right">
+        <!-- Object list with tabs -->
+        <div
+          class="panel-section"
+          style="
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+          "
+        >
+          <div class="section-header">🗂 Visible objects</div>
+
+          <div class="obj-tab-bar">
+            <div
+              class="obj-tab active"
+              data-tab="items"
+              onclick="switchTab('items')"
+            >
+              Items
+            </div>
+            <div
+              class="obj-tab"
+              data-tab="furniture"
+              onclick="switchTab('furniture')"
+            >
+              Furniture
+            </div>
+          </div>
+
+          <div id="object-tabs-content" style="overflow-y: auto; flex: 1">
+            <div class="obj-list" id="obj-list-items">
+              <span class="empty-list">No items nearby</span>
+            </div>
+            <div class="obj-list" id="obj-list-furniture" style="display: none">
+              <span class="empty-list">No furniture nearby</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action panel (appears when object selected) -->
+        <div id="action-panel">
+          <div id="selected-object-name">— select an object —</div>
+          <div id="action-buttons"></div>
+          <div id="target-prompt">
+            Now click a target object (surface/container)…
+          </div>
+          <div id="furniture-contents">
+            <div id="furniture-contents-header">Contents</div>
+            <div id="furniture-contents-list"></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Toast -->
+    <div id="toast"></div>
+
+    <script>
+      /* ═══════════════════════════════════════════════════════════════════════
+   VirtualHome GUI — client-side controller
+   Talks only to the new API:
+     GET  /api/state
+     GET  /api/task
+     GET  /api/image
+     POST /api/action   { action, obj_id, obj_class, target_id?, target_class? }
+     POST /api/reset
+     GET  /api/objects/query?obj_id=<id>
+   ═══════════════════════════════════════════════════════════════════════ */
+
+      "use strict";
+
+      // ── State ──────────────────────────────────────────────────────────────
+      let selectedObject = null; // { id, class_name, instance_num, actions, ... }
+      let pendingAction = null; // action name waiting for a second object (putback/putin)
+      let currentTab = "items";
+      let lastState = null; // cache of last /api/state response
+      let isSubmitting = false; // guard against concurrent POSTs
+      let pollHandle = null;
+
+      // ── Toast ──────────────────────────────────────────────────────────────
+      function showToast(msg, type = "info", duration = 2200) {
+        const el = document.getElementById("toast");
+        el.className = "show " + type;
+        el.textContent = msg;
+        clearTimeout(el._timer);
+        el._timer = setTimeout(() => {
+          el.className = "";
+        }, duration);
+      }
+
+      // ── Status indicator ───────────────────────────────────────────────────
+      function setStatus(state, label) {
+        const ind = document.getElementById("status-indicator");
+        const tb = document.getElementById("tb-status");
+        ind.className = state;
+        tb.textContent = label;
+      }
+
+      // ── Tab switching ──────────────────────────────────────────────────────
+      function switchTab(tab) {
+        currentTab = tab;
+        document
+          .querySelectorAll(".obj-tab")
+          .forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+        document.getElementById("obj-list-items").style.display =
+          tab === "items" ? "" : "none";
+        document.getElementById("obj-list-furniture").style.display =
+          tab === "furniture" ? "" : "none";
+      }
+
+      // ── API helpers ────────────────────────────────────────────────────────
+      async function apiGet(url) {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
+        return res.json();
+      }
+
+      async function apiPost(url, body) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok)
+          throw Object.assign(new Error(`POST ${url} → ${res.status}`), {
+            data,
+          });
+        return data;
+      }
+
+      // ── Image refresh ──────────────────────────────────────────────────────
+      async function refreshImage() {
+        try {
+          const { images } = await apiGet("/api/image?width=600&height=338");
+          const img = document.getElementById("main-image");
+          const overlay = document.getElementById("image-overlay");
+          if (images && images.length > 0) {
+            img.src = "data:image/jpeg;base64," + images[0];
+            overlay.classList.add("hidden");
+          }
+        } catch (e) {
+          /* image fetch failed silently — env may not be ready */
+        }
+      }
+
+      // ── State refresh (graph → UI) ─────────────────────────────────────────
+      async function refreshState() {
+        try {
+          const state = await apiGet("/api/state");
+          lastState = state;
+          renderState(state);
+          setStatus("ready", "Ready");
+        } catch (e) {
+          setStatus("error", "Env not ready");
+        }
+      }
+
+      function renderState(state) {
+        // Always clear selection on state refresh — prevents stale action buttons
+        // that don't match the new graph (e.g. cabinet already open but UI shows "open")
+        clearSelection();
+
+        const roomName = state.current_room?.class_name ?? "—";
+        document.getElementById("current-room-label").textContent = roomName;
+        document.getElementById("vp-room").textContent = roomName;
+
+        // Room navigation buttons
+        const roomContainer = document.getElementById("room-buttons");
+        roomContainer.innerHTML = "";
+        (state.rooms || []).forEach((room) => {
+          const btn = document.createElement("button");
+          btn.className =
+            "room-btn" + (room.id === state.current_room?.id ? " active" : "");
+          btn.textContent = room.class_name;
+          if (room.id === state.current_room?.id) {
+            btn.disabled = true;
+            btn.title = "Currently here";
+          } else {
+            btn.onclick = () => submitAction("walk", room.id, room.class_name);
+          }
+          roomContainer.appendChild(btn);
+        });
+        if (roomContainer.children.length === 0)
+          roomContainer.innerHTML =
+            '<span class="empty-list">No rooms found</span>';
+
+        // Held objects
+        const heldEl = document.getElementById("held-display");
+        heldEl.innerHTML = "";
+        if (state.held_objects?.length > 0) {
+          state.held_objects.forEach((obj) => {
+            const chip = document.createElement("div");
+            chip.className = "held-chip";
+            const hand = obj.hand || "";
+            chip.innerHTML = `<span style="color:var(--text-dim);font-size:9px">${hand}</span> ${obj.class_name}<span style="color:var(--text-dim)">.${obj.instance_num}</span>`;
+            heldEl.appendChild(chip);
+          });
+          // show empty slot if only holding 1
+          if (state.held_objects.length === 1) {
+            const empty = document.createElement("div");
+            empty.className = "held-chip";
+            empty.style.opacity = "0.4";
+            empty.style.borderStyle = "dashed";
+            const usedHand = state.held_objects[0].hand;
+            const freeHand = usedHand === "LH" ? "RH" : "LH";
+            empty.textContent = `${freeHand}: empty`;
+            heldEl.appendChild(empty);
+          }
+        } else {
+          heldEl.innerHTML = '<span class="held-empty">Nothing held</span>';
+        }
+
+        renderItemList(state.items || []);
+        renderFurnitureList(state.furniture || []);
+      }
+
+      function renderItemList(items) {
+        const container = document.getElementById("obj-list-items");
+        container.innerHTML = "";
+        if (items.length === 0) {
+          container.innerHTML =
+            '<span class="empty-list">No items in room</span>';
+          return;
+        }
+        items.forEach((obj) => {
+          const row = document.createElement("div");
+          row.className = "obj-row";
+          row.dataset.objId = obj.id;
+
+          // Main button (selects object, shows action panel)
+          const btn = document.createElement("button");
+          btn.className = "obj-btn" + (obj.is_close ? " obj-close" : "");
+          btn.dataset.objId = obj.id;
+
+          const nameSpan = document.createElement("span");
+          nameSpan.className = "obj-name";
+          nameSpan.textContent = `${obj.class_name}.${obj.instance_num}`;
+
+          const badges = document.createElement("span");
+          badges.className = "obj-badges";
+          if (obj.is_grabbed)
+            badges.innerHTML += '<span class="badge badge-held">held</span>';
+          else if (obj.is_close)
+            badges.innerHTML +=
+              '<span class="badge badge-close">✓ close</span>';
+          // Show where the item is stored
+          if (obj.container_class && !obj.is_grabbed) {
+            const badge_type = obj.container_is_open
+              ? "badge-open"
+              : "badge-close";
+            const openClose = obj.container_is_open ? "open" : "closed";
+            const ctnrLabel = obj.container_instance_num
+              ? `${obj.container_class}.${obj.container_instance_num}`
+              : obj.container_class;
+            badges.innerHTML += `<span class="badge ${badge_type}">in ${ctnrLabel} (${openClose})</span>`;
+          } else if (obj.walk_to_class && !obj.is_grabbed && !obj.is_close) {
+            const surfLabel = obj.walk_to_instance_num
+              ? `${obj.walk_to_class}.${obj.walk_to_instance_num}`
+              : obj.walk_to_class;
+            badges.innerHTML += `<span class="badge badge-close">on ${surfLabel}</span>`;
+          }
+
+          btn.appendChild(nameSpan);
+          btn.appendChild(badges);
+          btn.onclick = () => selectItem(obj);
+
+          // Inline walktowards quick button (always shown)
+          const walkBtn = document.createElement("button");
+          walkBtn.className = "action-btn inline-walk";
+          walkBtn.dataset.action = "walktowards";
+          walkBtn.title = "Walk towards";
+          walkBtn.textContent = "→";
+          walkBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (obj.walk_to_id) {
+              submitAction("walktowards", obj.walk_to_id, obj.walk_to_class);
+            } else {
+              submitAction("walktowards", obj.id, obj.class_name);
+            }
+          };
+
+          row.appendChild(btn);
+          row.appendChild(walkBtn);
+          container.appendChild(row);
+        });
+      }
+
+      function renderFurnitureList(furniture) {
+        const container = document.getElementById("obj-list-furniture");
+        container.innerHTML = "";
+        if (furniture.length === 0) {
+          container.innerHTML =
+            '<span class="empty-list">No furniture in room</span>';
+          return;
+        }
+        furniture.forEach((obj) => {
+          const row = document.createElement("div");
+          row.className = "obj-row";
+          row.dataset.objId = obj.id;
+
+          const btn = document.createElement("button");
+          btn.className = "obj-btn" + (obj.is_close ? " obj-close" : "");
+          btn.dataset.objId = obj.id;
+
+          const nameSpan = document.createElement("span");
+          nameSpan.className = "obj-name";
+          nameSpan.textContent = `${obj.class_name}.${obj.instance_num}`;
+
+          const badges = document.createElement("span");
+          badges.className = "obj-badges";
+          if (obj.is_close)
+            badges.innerHTML +=
+              '<span class="badge badge-close">✓ close</span>';
+          if (obj.is_open)
+            badges.innerHTML += '<span class="badge badge-open">open</span>';
+
+          btn.appendChild(nameSpan);
+          btn.appendChild(badges);
+          btn.onclick = () => selectFurniture(obj);
+
+          // Inline walktowards quick button (always shown)
+          const walkBtn = document.createElement("button");
+          walkBtn.className = "action-btn inline-walk";
+          walkBtn.dataset.action = "walktowards";
+          walkBtn.title = "Walk towards";
+          walkBtn.textContent = "→";
+          walkBtn.onclick = (e) => {
+            e.stopPropagation();
+            submitAction("walktowards", obj.id, obj.class_name);
+          };
+
+          row.appendChild(btn);
+          row.appendChild(walkBtn);
+          container.appendChild(row);
+        });
+      }
+
+      // ── Task / goal refresh ────────────────────────────────────────────────
+      async function refreshTask() {
+        try {
+          const task = await apiGet("/api/task");
+          renderTask(task);
+        } catch (e) {
+          /* silent */
+        }
+      }
+
+      function renderTask(task) {
+        document.getElementById("tb-task").textContent = task.task_name ?? "—";
+        document.getElementById("tb-step").textContent = task.step ?? 0;
+        document.getElementById("tb-maxstep").textContent =
+          task.max_steps ?? "—";
+
+        const goalList = document.getElementById("goal-list");
+        goalList.innerHTML = "";
+
+        const goals = task.goals ?? {};
+        if (Object.keys(goals).length === 0) {
+          goalList.innerHTML = '<li class="empty-list">No goals</li>';
+          return;
+        }
+
+        Object.entries(goals).forEach(([key, g]) => {
+          const done = Math.min(g.count_done, g.count_needed);
+          const needed = g.count_needed;
+          const pct = needed > 0 ? (done / needed) * 100 : 0;
+          const complete = done >= needed;
+
+          const li = document.createElement("li");
+          li.className = "goal-item" + (complete ? " complete" : "");
+          li.innerHTML = `
+      <div class="goal-label">${g.label ?? key}</div>
+      <div class="goal-progress-bar">
+        <div class="goal-progress-fill" style="width:${pct}%"></div>
+      </div>
+      <div class="goal-counts">${done} / ${needed}</div>
+    `;
+          goalList.appendChild(li);
+        });
+      }
+
+      // ── Object selection ───────────────────────────────────────────────────
+      // Items and furniture have separate selection flows.
+      // pendingAction is ALWAYS cancelled when state refreshes, preventing stale prompts.
+
+      function selectItem(obj) {
+        if (handleObjectClickWithPending(obj)) return;
+
+        // Mark selected
+        document
+          .querySelectorAll(".obj-btn.selected")
+          .forEach((b) => b.classList.remove("selected"));
+        const btnEl = document.querySelector(
+          `.obj-btn[data-obj-id="${obj.id}"]`,
+        );
+        if (btnEl) btnEl.classList.add("selected");
+
+        selectedObject = obj;
+        document.getElementById("selected-object-name").textContent =
+          `${obj.class_name}.${obj.instance_num}`;
+
+        const ac = document.getElementById("action-buttons");
+        ac.innerHTML = "";
+
+        for (const actionName of obj.actions || []) {
+          if (actionName === "walktowards_parent") {
+            // Walk to the parent container/surface instead of the item itself
+            const parentClass = obj.walk_to_class ?? obj.container_class;
+            const parentId = obj.walk_to_id ?? obj.container_id;
+            const btn = makeActionBtn(
+              "walktowards",
+              `walk to ${parentClass}`,
+              () => submitAction("walktowards", parentId, parentClass),
+            );
+            ac.appendChild(btn);
+          } else if (actionName === "walktowards") {
+            const btn = makeActionBtn("walktowards", "walk towards", () =>
+              submitAction("walktowards", obj.id, obj.class_name),
+            );
+            ac.appendChild(btn);
+          } else {
+            const btn = makeActionBtn(actionName, actionName, () =>
+              handleActionClick(actionName, obj),
+            );
+            ac.appendChild(btn);
+          }
+        }
+
+        // If holding something and item is close, offer putback on its surface parent
+        if (
+          obj.is_close &&
+          lastState?.held_objects?.length > 0 &&
+          obj.walk_to_class &&
+          !obj.actions.includes("putin") &&
+          !obj.actions.includes("putback")
+        ) {
+          const btn = makeActionBtn(
+            "putback",
+            `put on ${obj.walk_to_class}`,
+            () =>
+              submitAction(
+                "putback",
+                lastState.held_objects[0].id,
+                lastState.held_objects[0].class_name,
+                obj.walk_to_id,
+                obj.walk_to_class,
+              ),
+          );
+          ac.appendChild(btn);
+        }
+      }
+
+      function selectFurniture(obj) {
+        if (handleObjectClickWithPending(obj)) return;
+
+        // Mark selected
+        document
+          .querySelectorAll(".obj-btn.selected")
+          .forEach((b) => b.classList.remove("selected"));
+        const btnEl = document.querySelector(
+          `.obj-btn[data-obj-id="${obj.id}"]`,
+        );
+        if (btnEl) btnEl.classList.add("selected");
+
+        selectedObject = obj;
+        document.getElementById("selected-object-name").textContent =
+          `${obj.class_name}.${obj.instance_num}`;
+
+        const ac = document.getElementById("action-buttons");
+        ac.innerHTML = "";
+
+        const held = lastState?.held_objects ?? [];
+
+        for (const actionName of obj.actions || []) {
+          if (actionName === "walktowards") {
+            const btn = makeActionBtn("walktowards", "walk towards", () =>
+              submitAction("walktowards", obj.id, obj.class_name),
+            );
+            ac.appendChild(btn);
+          } else if (actionName === "putback" || actionName === "putin") {
+            // Generate one button per held item so the user picks which item to place.
+            // The held item is arg1, this furniture is arg2 — submitted immediately.
+            if (held.length === 0) {
+              const btn = makeActionBtn(actionName, actionName, () =>
+                handleActionClick(actionName, obj),
+              );
+              ac.appendChild(btn);
+            } else {
+              held.forEach((heldObj) => {
+                const verb = actionName === "putback" ? "put on" : "put in";
+                const hand = heldObj.hand ? ` (${heldObj.hand})` : "";
+                const label = `${verb}: ${heldObj.class_name}${hand}`;
+                const btn = makeActionBtn(actionName, label, () =>
+                  submitAction(
+                    actionName,
+                    heldObj.id,
+                    heldObj.class_name,
+                    obj.id,
+                    obj.class_name,
+                  ),
+                );
+                ac.appendChild(btn);
+              });
+            }
+          } else {
+            const btn = makeActionBtn(actionName, actionName, () =>
+              handleActionClick(actionName, obj),
+            );
+            ac.appendChild(btn);
+          }
+        }
+
+        // Render contents (items inside container / on surface)
+        renderFurnitureContents(obj);
+      }
+
+      function renderFurnitureContents(obj) {
+        const panel = document.getElementById("furniture-contents");
+        const list = document.getElementById("furniture-contents-list");
+        const header = document.getElementById("furniture-contents-header");
+        const contents = obj.contents ?? [];
+
+        list.innerHTML = "";
+
+        if (contents.length === 0) {
+          panel.classList.remove("visible");
+          return;
+        }
+
+        const held = lastState?.held_objects ?? [];
+        const canGrab = held.length < 2;
+        const isClose = obj.is_close;
+        const isOpen = obj.is_open;
+        // For surfaces there's no open/closed — items are always accessible when close
+        const accessible = isClose && (obj.is_surface || isOpen);
+
+        // Header: show count and open/closed hint
+        let hint = "";
+        if (obj.is_container && !obj.is_surface) {
+          hint = isOpen ? " (open)" : " (closed — open first to grab)";
+        }
+        header.textContent = `Contents · ${contents.length} item${contents.length !== 1 ? "s" : ""}${hint}`;
+
+        contents.forEach((item) => {
+          const row = document.createElement("div");
+          row.className =
+            "content-item-row" + (item.is_grabbable ? "" : " not-grabbable");
+
+          const relationSpan = document.createElement("span");
+          relationSpan.className = "content-item-relation";
+          relationSpan.textContent = item.relation === "inside" ? "in" : "on";
+
+          const nameSpan = document.createElement("span");
+          nameSpan.className = "content-item-name";
+          nameSpan.textContent = `${item.class_name}.${item.instance_num}`;
+
+          row.appendChild(relationSpan);
+          row.appendChild(nameSpan);
+
+          if (item.is_grabbable) {
+            const grabBtn = document.createElement("button");
+            grabBtn.className = "content-grab-btn";
+            grabBtn.textContent = "grab";
+            grabBtn.disabled = !accessible || !canGrab;
+            if (!isClose) grabBtn.title = "Walk closer first";
+            else if (obj.is_container && !isOpen)
+              grabBtn.title = "Open the container first";
+            else if (!canGrab) grabBtn.title = "Both hands full";
+            grabBtn.onclick = () =>
+              submitAction("grab", item.id, item.class_name);
+            row.appendChild(grabBtn);
+          }
+
+          list.appendChild(row);
+        });
+
+        panel.classList.add("visible");
+      }
+
+      function makeActionBtn(actionKey, label, onClick) {
+        const btn = document.createElement("button");
+        btn.className = "action-btn";
+        btn.dataset.action = actionKey;
+        btn.textContent = label;
+        btn.onclick = onClick;
+        return btn;
+      }
+
+      function clearSelection() {
+        selectedObject = null;
+        pendingAction = null;
+        document.getElementById("selected-object-name").textContent =
+          "— select an object —";
+        document.getElementById("action-buttons").innerHTML = "";
+        document.getElementById("target-prompt").classList.remove("visible");
+        document
+          .getElementById("furniture-contents")
+          .classList.remove("visible");
+        document.getElementById("furniture-contents-list").innerHTML = "";
+        document
+          .querySelectorAll(".obj-btn.selected")
+          .forEach((b) => b.classList.remove("selected"));
+      }
+
+      // ── Action handling ────────────────────────────────────────────────────
+      function handleActionClick(actionName, obj) {
+        if (isSubmitting) {
+          showToast("Please wait…", "warn");
+          return;
+        }
+
+        if (actionName === "putback" || actionName === "putin") {
+          // Two-object action: need to pick a target from the furniture list
+          pendingAction = { action: actionName, obj };
+          document.getElementById("target-prompt").classList.add("visible");
+          // Switch to furniture tab so user can pick a target
+          switchTab("furniture");
+          showToast(
+            "Select a target surface/container in the Furniture tab",
+            "warn",
+            4000,
+          );
+          return;
+        }
+
+        submitAction(actionName, obj.id, obj.class_name);
+      }
+
+      // When user clicks a furniture object while a two-object action is pending,
+      // the clicked object becomes the target.
+      function handleObjectClickWithPending(clickedObj) {
+        if (!pendingAction) return false;
+        const { action, obj } = pendingAction;
+        pendingAction = null;
+        document.getElementById("target-prompt").classList.remove("visible");
+        submitAction(
+          action,
+          obj.id,
+          obj.class_name,
+          clickedObj.id,
+          clickedObj.class_name,
+        );
+        return true;
+      }
+
+      async function submitAction(
+        action,
+        obj_id,
+        obj_class,
+        target_id = null,
+        target_class = null,
+      ) {
+        if (isSubmitting) {
+          showToast("Action in progress…", "warn");
+          return;
+        }
+
+        // Room navigation: loop walktowards until the agent is inside the destination room.
+        // [walk] teleports; [walktowards] moves one step. We keep submitting until arrived.
+        if (action === "walk" && obj_class !== null) {
+          await walkToRoom(obj_id, obj_class);
+          return;
+        }
+
+        isSubmitting = true;
+        setStatus("waiting", "Submitting…");
+        setActionButtonsEnabled(false);
+
+        try {
+          const body = { action, obj_id, obj_class };
+          if (target_id !== null) body.target_id = target_id;
+          if (target_class !== null) body.target_class = target_class;
+
+          const res = await apiPost("/api/action", body);
+
+          if (res.accepted) {
+            showToast(`✓ ${res.action_str}`, "success");
+            clearSelection();
+            await waitAndRefresh();
+          } else {
+            const reasons = {
+              already_submitted: "Another action was already sent this step.",
+              invalid_params: `Bad params: ${res.detail ?? ""}`,
+            };
+            showToast(reasons[res.reason] ?? res.reason, "error");
+            setStatus("ready", "Ready");
+          }
+        } catch (e) {
+          showToast("Action failed — check server", "error");
+          setStatus("error", "Error");
+        } finally {
+          isSubmitting = false;
+          setActionButtonsEnabled(true);
+        }
+      }
+
+      async function walkToRoom(room_id, room_class) {
+        // Walk to a room by repeatedly submitting [walktowards] until arrived.
+        // Uses /api/ready to block between steps — no blind polling, no double-posts.
+        // State, image and task are all refreshed after each step for live feedback.
+        isSubmitting = true;
+        setStatus("waiting", `Walking to ${room_class}…`);
+        setActionButtonsEnabled(false);
+
+        const MAX_STEPS = 30;
+        try {
+          for (let step = 0; step < MAX_STEPS; step++) {
+            // 1. Submit one walktowards step
+            const res = await apiPost("/api/action", {
+              action: "walktowards",
+              obj_id: room_id,
+              obj_class: room_class,
+            });
+
+            if (!res.accepted) {
+              showToast(`Walk interrupted: ${res.reason}`, "warn");
+              break;
+            }
+
+            // 2. Wait for the arena to finish processing that action
+            await waitForReady();
+
+            // 3. Refresh state + image in parallel for live feedback on every step
+            const [state] = await Promise.all([
+              apiGet("/api/state"),
+              refreshImage(),
+              refreshTask(),
+            ]);
+            lastState = state;
+            renderState(state);
+            setStatus(
+              "waiting",
+              `Walking to ${room_class}… (step ${step + 1})`,
+            );
+
+            // 4. Check if arrived
+            if (state.current_room?.id === room_id) {
+              showToast(`Arrived at ${room_class}`, "success");
+              break;
+            }
+          }
+        } catch (e) {
+          showToast("Walk failed — check server", "error");
+          setStatus("error", "Error");
+        } finally {
+          isSubmitting = false;
+          setActionButtonsEnabled(true);
+          setStatus("ready", "Ready");
+        }
+      }
+
+      async function waitForReady(timeoutSec = 10) {
+        // Block on /api/ready until the arena has finished the step.
+        // Falls back to a simple sleep if the server returns a timeout.
+        try {
+          const res = await fetch(`/api/ready?timeout=${timeoutSec}`);
+          const data = await res.json();
+          if (!data.ready) {
+            // Arena timed out (very long step) — just proceed with whatever state is there
+            console.warn(
+              "waitForReady: arena step timed out, continuing anyway",
+            );
+          }
+        } catch (e) {
+          // Network error during long-poll — wait a moment and continue
+          await sleep(500);
+        }
+      }
+
+      async function waitAndRefresh() {
+        // Wait for the arena to complete the current step, then refresh all UI.
+        await waitForReady();
+        const state = await apiGet("/api/state");
+        lastState = state;
+        renderState(state);
+        await Promise.all([refreshImage(), refreshTask()]);
+        setStatus("ready", "Ready");
+      }
+
+      // ── Reset ──────────────────────────────────────────────────────────────
+      async function requestReset() {
+        if (isSubmitting) {
+          showToast("Wait for current action to finish.", "warn");
+          return;
+        }
+        if (!confirm("Reset the current episode?")) return;
+
+        setStatus("waiting", "Resetting…");
+        try {
+          const res = await apiPost("/api/reset", {});
+          if (res.accepted) {
+            showToast("Episode reset requested", "success");
+            clearSelection();
+            await sleep(800);
+            await refreshAll();
+          } else {
+            showToast(`Reset refused: ${res.reason}`, "error");
+          }
+        } catch (e) {
+          showToast("Reset failed", "error");
+          setStatus("error", "Error");
+        }
+      }
+
+      // ── Helpers ────────────────────────────────────────────────────────────
+      function setActionButtonsEnabled(enabled) {
+        document
+          .querySelectorAll(
+            ".action-btn, .room-btn:not([disabled]), .obj-btn, #btn-reset, .inline-walk",
+          )
+          .forEach((b) => {
+            b.disabled = !enabled;
+          });
+      }
+
+      function sleep(ms) {
+        return new Promise((r) => setTimeout(r, ms));
+      }
+
+      async function refreshAll() {
+        await Promise.all([refreshState(), refreshImage(), refreshTask()]);
+      }
+
+      // ── Keyboard shortcuts ─────────────────────────────────────────────────
+      document.addEventListener("keydown", (e) => {
+        if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")
+          return;
+
+        switch (e.key) {
+          case "r":
+          case "R":
+            e.preventDefault();
+            refreshAll();
+            break;
+
+          case "Escape":
+            e.preventDefault();
+            clearSelection();
+            break;
+
+          default:
+            break;
+        }
+      });
+
+      // ── Polling loop ───────────────────────────────────────────────────────
+      // Refresh images on a light interval so the viewport stays fresh even
+      // without user interaction, without hammering the graph endpoint.
+      function startPolling() {
+        clearInterval(pollHandle);
+        pollHandle = setInterval(() => {
+          if (!isSubmitting) refreshImage();
+        }, 3000);
+
+        // Task + state poll every 5s
+        setInterval(() => {
+          if (!isSubmitting) refreshTask();
+        }, 5000);
+      }
+
+      // ── Bootstrap ─────────────────────────────────────────────────────────
+      window.addEventListener("DOMContentLoaded", async () => {
+        setStatus("waiting", "Connecting…");
+        await refreshAll();
+        startPolling();
+      });
+    </script>
+  </body>
+</html>

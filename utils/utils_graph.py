@@ -15,6 +15,7 @@ from virtualhome.simulation.evolving_graph.environment import (
 
 from utils import utils_environment as utils_env
 from utils.utils_logging import format_row, get_my_logger
+from utils.utils_environment import check_progress2
 
 TASK_TO_OBJECT_NAMES = dict(
     prepare_food=["apple", "cupcake", "pudding", "salmon"],
@@ -364,6 +365,154 @@ class GN(GraphNode):
     def __format__(self, format_spec):
         return format(str(self), format_spec)
 
+    @property
+    def is_grabbable(self) -> bool:
+        return Property.GRABBABLE in self.properties
+
+    @property
+    def is_container(self) -> bool:
+        return Property.CONTAINERS in self.properties
+
+    @property
+    def is_surface(self) -> bool:
+        return Property.SURFACES in self.properties
+
+    @property
+    def is_open(self) -> bool:
+        return State.OPEN in self.states
+
+    @property
+    def is_closed(self) -> bool:
+        return State.CLOSED in self.states
+
+    def walk_target(self) -> "GN | None":
+        """
+        Return the node the agent should walk towards to interact with this object.
+        """
+        if self.is_grabbable:
+            ctnr = self.get_ctnr(fix=True)
+            srfc = self.get_srfc(fix=True)
+            if isinstance(ctnr, set):
+                ctnr = next(iter(ctnr))
+            if isinstance(srfc, set):
+                srfc = next(iter(srfc))
+            parent = ctnr or srfc
+            if parent is not None and (parent.is_container or parent.is_surface):
+                return parent
+            # No parent
+            return self
+        if self.is_container or self.is_surface:
+            return self
+        return None
+
+    @property
+    def instance_num(self) -> int:
+        """1-based index among all nodes with the same class_name in the graph."""
+        same = self.graph._class_name_map.get(self.class_name, [])
+        for i, n in enumerate(same, start=1):
+            if n.id == self.id:
+                return i
+        return 1
+
+    def to_gui_dict(self, agent: "GN", held_ids: set[int]) -> dict:
+        """
+        Serialise this node into the dict shape the GUI frontend expects.
+        `agent` is the human character node.
+        `held_ids` is the set of object ids currently held by the agent.
+
+        walktowards is always included for every item and furniture so the user
+        can navigate toward any object.
+        Grab is offered whenever the agent holds fewer than 2 items.
+        """
+        is_close   = self in agent.close()
+        is_grabbed = self.id in held_ids
+        walk_tgt   = self.walk_target()
+        can_grab_more = len(held_ids) < 2
+
+        actions: list[str] = []
+
+        if self.is_container or self.is_surface:
+            # Furniture path
+            actions.append("walktowards")
+            if is_close:
+                if self.is_container:
+                    actions.append("close" if self.is_open else "open")
+                    if held_ids and self.is_open:
+                        actions.append("putin")
+                if self.is_surface and held_ids:
+                    actions.append("putback")
+                if self.is_grabbable and can_grab_more:
+                    actions.append("grab")
+
+        elif self.is_grabbable:
+            # Item
+            if walk_tgt is not None and walk_tgt.id != self.id:
+                parent_is_close = walk_tgt in agent.close()
+                # walk to the parent container/surface
+                actions.append("walktowards_parent")
+                if parent_is_close:
+                    if walk_tgt.is_container and not walk_tgt.is_open:
+                        pass
+                    elif can_grab_more:
+                        actions.append("grab")
+            else:
+                # Item is directly in the room
+                actions.append("walktowards")
+                if is_close and can_grab_more:
+                    actions.append("grab")
+
+        d: dict = {
+            "id":           self.id,
+            "class_name":   self.class_name,
+            "instance_num": self.instance_num,
+            "is_close":     is_close,
+            "is_open":      self.is_open,
+            "is_grabbed":   is_grabbed,
+            "is_grabbable": self.is_grabbable,
+            "is_container": self.is_container,
+            "is_surface":   self.is_surface,
+            "actions":      actions,
+        }
+        # items inside containers or on surfaces (for furniture gui display)
+        if self.is_container or self.is_surface:
+            contents: list[dict] = []
+            if self.is_container:
+                for child in self.contains():
+                    contents.append({
+                        "id":           child.id,
+                        "class_name":   child.class_name,
+                        "instance_num": child.instance_num,
+                        "is_grabbable": child.is_grabbable,
+                        "relation":     "inside",
+                    })
+            if self.is_surface:
+                for child in self.supports():
+                    contents.append({
+                        "id":           child.id,
+                        "class_name":   child.class_name,
+                        "instance_num": child.instance_num,
+                        "is_grabbable": child.is_grabbable,
+                        "relation":     "on",
+                    })
+            d["contents"] = contents
+        # items inside containers or on surfaces (for item gui display)
+        if self.is_grabbable and walk_tgt is not None and walk_tgt.id != self.id:
+            d["walk_to_id"]    = walk_tgt.id
+            d["walk_to_class"] = walk_tgt.class_name
+            d["walk_to_instance_num"] = walk_tgt.instance_num
+            if walk_tgt.is_container:
+                d["container_id"]       = walk_tgt.id
+                d["container_class"]    = walk_tgt.class_name
+                d["container_instance_num"] = walk_tgt.instance_num
+                d["container_is_open"]  = walk_tgt.is_open
+                d["container_is_close"] = walk_tgt in agent.close()
+        else:
+            d["walk_to_id"]    = None
+            d["walk_to_class"] = None
+            d["walk_to_instance_num"] = None
+
+        return d
+
 
 class GE(GraphEdge):
     def __str__(self):
@@ -665,6 +814,110 @@ class EG(EnvironmentGraph):
         tgt_rooms = [room for room, cnt in Counter(tgt_rooms).most_common()]
 
         return obj_rooms, tgt_rooms
+
+    def gui_state(self, agent_id: int) -> dict:
+        """
+        Return a GUI state dict for the human agent.
+
+        Shape:
+          current_room:  {id, class_name}
+          rooms:         [{id, class_name}]
+          held_objects:  [{id, class_name, instance_num}]
+          items:         [GN.to_gui_dict, ...]   — grabbable objects in current room
+          furniture:     [GN.to_gui_dict, ...]   — containers/surfaces in current room
+        """
+        agent = self._node_map.get(agent_id)
+        assert agent is not None, f"Agent with id {agent_id} not found in graph"
+
+        # rooms
+        rooms_list = [
+            {"id": r.id, "class_name": r.class_name}
+            for r in self.get_rooms()
+        ]
+
+        # current room
+        current_room_node = agent.get_room(fix=True)
+        current_room = (
+            {"id": current_room_node.id, "class_name": current_room_node.class_name}
+            if current_room_node else {}
+        )
+
+        # held objects
+        held_lh = agent.filter_deg(Relation.HOLDS_LH, "outdeg")
+        held_rh = agent.filter_deg(Relation.HOLDS_RH, "outdeg")
+        held_ids_lh = {n.id for n in held_lh}
+        held_ids_rh = {n.id for n in held_rh}
+        held_nodes = held_lh + held_rh
+        held_ids   = {n.id for n in held_nodes}
+        held_objects = [
+            {
+                "id": n.id,
+                "class_name": n.class_name,
+                "instance_num": n.instance_num,
+                "hand": "LH" if n.id in held_ids_lh else "RH",
+            }
+            for n in held_nodes
+        ]
+
+        # all objects inside the current room
+        if current_room_node is None:
+            return {"current_room": current_room, "rooms": rooms_list,
+                    "held_objects": held_objects, "items": [], "furniture": []}
+
+        room_obj_nodes = [
+            self[from_id]
+            for from_id, rel in current_room_node.indeg
+            if rel == Relation.INSIDE and from_id in self._node_map
+        ]
+
+        # Collect all grabbable items in this room
+        # 1. directly in room
+        # 2. inside a container in this room,
+        # 3. on a surface in this room
+        seen_item_ids: set[int] = set()
+        items: list[dict] = []
+
+        for node in room_obj_nodes:
+            if node.category == "Rooms":
+                continue
+
+            if node.is_grabbable and node.id not in held_ids and node.id not in seen_item_ids:
+                seen_item_ids.add(node.id)
+                d = node.to_gui_dict(agent, held_ids)
+                items.append(d)
+
+            if node.is_container:
+                for child in node.contains():
+                    if child.is_grabbable and child.id not in seen_item_ids and child.id not in held_ids:
+                        seen_item_ids.add(child.id)
+                        d = child.to_gui_dict(agent, held_ids)
+                        items.append(d)
+
+            if node.is_surface:
+                for child in node.supports():
+                    if child.is_grabbable and child.id not in seen_item_ids and child.id not in held_ids:
+                        seen_item_ids.add(child.id)
+                        d = child.to_gui_dict(agent, held_ids)
+                        items.append(d)
+
+        items.sort(key=lambda o: (not o["is_close"], o["class_name"], o["instance_num"]))
+
+        # collect furniture
+        furniture: list[dict] = []
+        for node in room_obj_nodes:
+            if not (node.is_container or node.is_surface):
+                continue
+            d = node.to_gui_dict(agent, held_ids)
+            furniture.append(d)
+        furniture.sort(key=lambda o: (not o["is_close"], o["class_name"], o["instance_num"]))
+
+        return {
+            "current_room": current_room,
+            "rooms":        rooms_list,
+            "held_objects": held_objects,
+            "items":        items,
+            "furniture":    furniture,
+        }
 
     def goal_tree(self, goal, title):
         assert self.lg is not None

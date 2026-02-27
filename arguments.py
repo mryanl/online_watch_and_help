@@ -258,6 +258,8 @@ def get_args():
         help="whether to use an editor or executable",
     )
 
+    parser.add_argument("--portflask", type=int, default=5005)
+
     parser = add_helper_args(parser)
 
     args = parser.parse_args()

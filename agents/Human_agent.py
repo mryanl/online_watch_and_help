@@ -1,23 +1,140 @@
-from utils.utils_graph import (
-    check_progress,
-)
+import copy
+import threading
+from queue import Queue
+
+from utils.utils_graph import check_progress
+
+class HumanResetRequest(Exception):
+    """
+    Raised by Human_agent.get_action() when the GUI requests an episode reset.
+    """
+    pass
 
 
 class Human_agent:
-    def __init__(self, *args, **kwargs):
-        self.agent_type = "Human"
+    agent_type = "Human"
 
-    def reset(self, gt_graph):
+    def __init__(self, agent_id: int, char_index: int, **kwargs):
+        """
+        Args:
+            agent_id:   1-indexed agent id used by the VirtualHome env (e.g. 2 for helper).
+            char_index: 0-indexed character index used by the arena (e.g. 1 for helper).
+        """
+        self.agent_id = agent_id
+        self.char_index = char_index
+
+        self._action_queue: Queue[str] = Queue(maxsize=1)
+
+        # signals the GUI that a new observation is ready to display.
+        self._obs_ready = threading.Event()
+
+        # prevents double-submissions of actions.
+        self._step_lock = threading.Lock()
+
+        # Latest observation snapshot.
+        self._obs_lock = threading.RLock()
+        self._latest_obs: dict | None = None
+
+        # Set by the arena
+        self.saver = None
+
+    def reset(self, gt_graph: dict):
         self.init_gt_graph = gt_graph
 
-    def get_action(self, obs):
-        graphs = self.saver.episode_saved_info["graph"]
+        try:
+            self._action_queue.get_nowait()
+        except Exception:
+            pass
 
-        prev_actions = self.saver.episode_saved_info["action"]
-        human_actions = prev_actions[0]
-        helper_actions = prev_actions[1]
+        if self._step_lock.locked():
+            try:
+                self._step_lock.release()
+            except RuntimeError:
+                pass
 
-        human_done, human_grab, human_touched = check_progress(human_actions)
-        helper_done, helper_grab, helper_touched = check_progress(helper_actions)
+        self._obs_ready.clear()
+        with self._obs_lock:
+            self._latest_obs = None
 
-        return action
+    def get_action(self, obs: dict) -> tuple[str, dict]:
+        """
+        Called once per arena step. Publishes the observation to the GUI,
+        then BLOCKS until the GUI submits one action string.
+
+        Returns:
+            (action_str, agent_info_dict)
+        """
+        # Release the step lock so a new submit_action call can proceed.
+        if self._step_lock.locked():
+            try:
+                self._step_lock.release()
+            except RuntimeError:
+                pass
+
+        # save the latest observation
+        with self._obs_lock:
+            self._latest_obs = copy.deepcopy(obs)
+        self._obs_ready.set()
+
+        # blocks until the GUI delivers an action.
+        action_str = self._action_queue.get()
+
+        self._obs_ready.clear()
+
+        if action_str == "__RESET__":
+            raise HumanResetRequest()
+
+        # for logging
+        agents_info = {
+            "subgoals": [[]],
+            "plan": None,
+        }
+        return action_str, agents_info
+
+
+    def submit_action(self, action_str: str) -> bool:
+        """
+        Submit a human action for the current step.
+
+        Returns True if accepted, False if a submission is already pending.
+        """
+        # If it is held, this step has a pending action.
+        if not self._step_lock.acquire(blocking=False):
+            return False
+
+        try:
+            self._action_queue.put_nowait(action_str)
+            return True
+        except Exception:
+            self._step_lock.release()
+            return False
+
+    def get_obs_snapshot(self) -> dict | None:
+        """
+        Return the most recent observation.
+        """
+        with self._obs_lock:
+            if self._latest_obs is None:
+                return None
+            return copy.deepcopy(self._latest_obs)
+
+    def is_obs_ready(self) -> bool:
+        """True when a fresh observation is waiting for the GUI."""
+        return self._obs_ready.is_set()
+
+    def get_action_history(self) -> list[str | None]:
+        """Return the action history for this agent (human = char_index 0 or 1)."""
+        if self.saver is None:
+            return []
+        return self.saver.episode_saved_info["action"][self.char_index]
+
+
+    def get_progress(self) -> dict:
+        actions = self.get_action_history()
+        parseable = [a for a in actions if a is not None]
+        done_counter, grab_counter, touched_ids = check_progress(parseable)
+        return {
+            "done": dict(done_counter),
+            "holding": dict(grab_counter),
+            "touched_ids": list(touched_ids),
+        }
