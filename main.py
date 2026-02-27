@@ -159,7 +159,7 @@ class Runner:
             executable_args=dict(
                 file_name=self.args.executable_file,
                 x_display=self.args.display,
-                no_graphics=False,
+                no_graphics=self.args.no_graphics,
                 timeout_wait=30,
             ),
             base_port=self.args.base_port,

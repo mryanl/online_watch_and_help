@@ -1,5 +1,5 @@
 import argparse
-
+import os
 
 def add_helper_args(parser):
     parser.add_argument(
@@ -239,7 +239,7 @@ def get_args():
     parser.add_argument(
         "--executable_file",
         type=str,
-        default="../executable/linux_exec_v3.x86_64",
+        default=os.environ.get("VIRTUALHOME_EXEC", "../executable/linux_exec_v3.x86_64"),
     )
     parser.add_argument(
         "--base_port",
@@ -250,6 +250,12 @@ def get_args():
         "--display",
         type=str,
         default="0",
+    )
+    parser.add_argument(
+        "--no_graphics",
+        action="store_true",
+        default=os.environ.get("VH_NO_GRAPHICS", "false").lower() == "true",
+        help="Run Unity simulator in headless mode",
     )
     parser.add_argument(
         "--use_editor",
