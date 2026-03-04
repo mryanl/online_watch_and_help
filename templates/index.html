@@ -213,6 +213,11 @@
       /* ── Left panel: navigation + task ──────────────────────────────── */
       #panel-left {
         background: var(--panel-alt);
+        overflow-y: auto;
+        min-height: 0;
+      }
+      #panel-left .panel-section {
+        flex-shrink: 0;
       }
 
       /* Room buttons */
@@ -724,6 +729,114 @@
         color: var(--amber);
       }
 
+      /* ── Helper agent panel ─────────────────────────────────────────── */
+      #helper-panel {
+        border-color: rgba(245, 166, 35, 0.2);
+      }
+      #helper-panel .section-header {
+        background: rgba(245, 166, 35, 0.06);
+        border-bottom-color: rgba(245, 166, 35, 0.2);
+        color: var(--amber);
+      }
+      .helper-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .helper-field:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+      }
+      .helper-field-label {
+        font-family: var(--mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+      }
+      .helper-action-pill {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        background: rgba(245, 166, 35, 0.07);
+        border: 1px solid rgba(245, 166, 35, 0.22);
+        border-radius: var(--radius);
+        padding: 5px 10px;
+        font-family: var(--mono);
+        font-size: 11px;
+        min-height: 30px;
+        word-break: break-all;
+      }
+      .helper-action-verb {
+        font-weight: 700;
+        color: var(--amber);
+        flex-shrink: 0;
+        background: rgba(245, 166, 35, 0.12);
+        border-radius: 3px;
+        padding: 1px 5px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .helper-action-args {
+        color: var(--text-mid);
+        font-size: 11px;
+        word-break: break-all;
+      }
+      .helper-action-none {
+        color: var(--text-dim);
+        font-style: italic;
+        font-size: 11px;
+      }
+      .helper-hands {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+      .helper-hand-slot {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 6px 8px;
+        min-height: 44px;
+      }
+      .helper-hand-slot.occupied {
+        border-color: rgba(245, 166, 35, 0.3);
+        background: rgba(245, 166, 35, 0.05);
+      }
+      .helper-hand-label {
+        font-family: var(--mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: var(--text-dim);
+        text-transform: uppercase;
+      }
+      .helper-hand-slot.occupied .helper-hand-label {
+        color: rgba(245, 166, 35, 0.6);
+      }
+      .helper-hand-item {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--amber);
+        word-break: break-word;
+        line-height: 1.3;
+      }
+      .helper-hand-empty {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text-dim);
+        font-style: italic;
+        align-self: center;
+        margin-top: auto;
+      }
+
       /* ── Scrollbar ──────────────────────────────────────────────────── */
       ::-webkit-scrollbar {
         width: 5px;
@@ -776,23 +889,8 @@
     <main id="main">
       <!-- LEFT: Navigation + Task panel -->
       <aside class="panel" id="panel-left">
-        <!-- Current room -->
-        <div class="panel-section">
-          <div class="section-header">📍 Location</div>
-          <div class="section-body">
-            <span
-              id="current-room-label"
-              style="
-                font-family: var(--mono);
-                font-size: 13px;
-                color: var(--accent);
-              "
-              >—</span
-            >
-          </div>
-        </div>
-
         <!-- Room navigation -->
+        <span id="current-room-label" style="display: none"></span>
         <div class="panel-section">
           <div class="section-header">🚶 Navigate to room</div>
           <div class="section-body">
@@ -819,6 +917,38 @@
             <ul id="goal-list">
               <li class="empty-list">Loading…</li>
             </ul>
+          </div>
+        </div>
+
+        <!-- Helper agent status -->
+        <div class="panel-section" id="helper-panel">
+          <div class="section-header">🤖 Helper agent</div>
+          <div
+            class="section-body"
+            style="display: flex; flex-direction: column; gap: 0"
+          >
+            <!-- Last action -->
+            <div class="helper-field">
+              <div class="helper-field-label">Last action</div>
+              <div id="helper-last-action" class="helper-action-pill">
+                <span class="helper-action-none">No action yet</span>
+              </div>
+            </div>
+
+            <!-- Held objects: two hand slots -->
+            <div class="helper-field">
+              <div class="helper-field-label">Holding</div>
+              <div class="helper-hands">
+                <div class="helper-hand-slot" id="helper-hand-lh">
+                  <span class="helper-hand-label">LH</span>
+                  <span class="helper-hand-empty">empty</span>
+                </div>
+                <div class="helper-hand-slot" id="helper-hand-rh">
+                  <span class="helper-hand-label">RH</span>
+                  <span class="helper-hand-empty">empty</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </aside>
@@ -1002,9 +1132,25 @@
       }
 
       function renderState(state) {
-        // Always clear selection on state refresh — prevents stale action buttons
-        // that don't match the new graph (e.g. cabinet already open but UI shows "open")
-        clearSelection();
+        if (selectedObject !== null) {
+          const allObjects = [
+            ...(state.items || []),
+            ...(state.furniture || []),
+          ];
+          const fresh = allObjects.find((o) => o.id === selectedObject.id);
+          if (fresh) {
+            selectedObject = fresh;
+            if (!pendingAction) {
+              if (fresh.is_container || fresh.is_surface)
+                selectFurniture(fresh);
+              else selectItem(fresh);
+            }
+          } else {
+            clearSelection();
+          }
+        } else {
+          clearSelection();
+        }
 
         const roomName = state.current_room?.class_name ?? "—";
         document.getElementById("current-room-label").textContent = roomName;
@@ -1058,6 +1204,7 @@
 
         renderItemList(state.items || []);
         renderFurnitureList(state.furniture || []);
+        renderHelper(state.helper || {});
       }
 
       function renderItemList(items) {
@@ -1674,6 +1821,75 @@
         }
       });
 
+      // ── Helper agent refresh ───────────────────────────────────────────────
+      // Helper data is included in /api/state under the `helper` key.
+      // renderHelper is called by renderState — no separate network fetch needed.
+      function renderHelper(h) {
+        // ── Last action: parse verb and args for highlighted display ──────────
+        const actionEl = document.getElementById("helper-last-action");
+        actionEl.innerHTML = "";
+        if (h.last_action) {
+          // Extract verb from "[verb] ..." format
+          const verbMatch = h.last_action.match(/^\[(\w+)\]\s*(.*)/s);
+          if (verbMatch) {
+            const verb = document.createElement("span");
+            verb.className = "helper-action-verb";
+            verb.textContent = verbMatch[1];
+            const args = document.createElement("span");
+            args.className = "helper-action-args";
+            args.textContent = verbMatch[2] || "";
+            actionEl.appendChild(verb);
+            if (verbMatch[2]) actionEl.appendChild(args);
+          } else {
+            const span = document.createElement("span");
+            span.className = "helper-action-args";
+            span.textContent = h.last_action;
+            actionEl.appendChild(span);
+          }
+        } else {
+          const none = document.createElement("span");
+          none.className = "helper-action-none";
+          none.textContent = "No action yet";
+          actionEl.appendChild(none);
+        }
+
+        // ── Held objects: fill LH / RH slots ─────────────────────────────────
+        const held = h.held_objects || [];
+        const lhObj = held.find((o) => o.hand === "LH") || null;
+        const rhObj = held.find((o) => o.hand === "RH") || null;
+
+        function fillSlot(slotId, obj) {
+          const slot = document.getElementById(slotId);
+          slot.innerHTML = "";
+          const label = document.createElement("span");
+          label.className = "helper-hand-label";
+          label.textContent = slotId === "helper-hand-lh" ? "LH" : "RH";
+          slot.appendChild(label);
+          if (obj) {
+            slot.classList.add("occupied");
+            const item = document.createElement("span");
+            item.className = "helper-hand-item";
+            item.textContent = `${obj.class_name}`;
+            if (obj.instance_num > 1) {
+              const inst = document.createElement("span");
+              inst.style.cssText = "color:rgba(245,166,35,0.45);font-size:10px";
+              inst.textContent = ` #${obj.instance_num}`;
+              item.appendChild(inst);
+            }
+            slot.appendChild(item);
+          } else {
+            slot.classList.remove("occupied");
+            const empty = document.createElement("span");
+            empty.className = "helper-hand-empty";
+            empty.textContent = "empty";
+            slot.appendChild(empty);
+          }
+        }
+
+        fillSlot("helper-hand-lh", lhObj);
+        fillSlot("helper-hand-rh", rhObj);
+      }
+
       // ── Polling loop ───────────────────────────────────────────────────────
       // Refresh images on a light interval so the viewport stays fresh even
       // without user interaction, without hammering the graph endpoint.
@@ -1683,7 +1899,12 @@
           if (!isSubmitting) refreshImage();
         }, 3000);
 
-        // Task + state poll every 5s
+        // State poll every 1s
+        setInterval(() => {
+          if (!isSubmitting) refreshState();
+        }, 1000);
+
+        // Task poll every 5s
         setInterval(() => {
           if (!isSubmitting) refreshTask();
         }, 5000);

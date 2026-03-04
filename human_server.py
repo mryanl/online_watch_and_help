@@ -17,7 +17,7 @@ import numpy as np
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from PIL import Image
 
-from utils.utils_graph import EG, Goal
+from utils.utils_graph import EG, Goal, Relation
 
 if TYPE_CHECKING:
     from agents.Human_agent import Human_agent
@@ -80,8 +80,8 @@ def _build_action_script(
 
 
 def _encode_image(np_img) -> str:
-    """Convert an H×W×3 uint8 numpy array (RGB or BGR) to base64 JPEG string."""
-    img = Image.fromarray(np_img.astype("uint8"))
+    """Convert an H×W×3 uint8 BGR numpy array to base64 JPEG string."""
+    img = Image.fromarray(np_img[:, :, ::-1].astype("uint8"))  # BGR → RGB
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=85)
     return base64.b64encode(buf.getvalue()).decode("utf-8")
@@ -128,7 +128,7 @@ class HumanServer:
             }
             """
             graph = self.env.get_graph()
-            state = EG(graph).gui_state(self.human_agent.agent_id)
+            state = EG(graph).gui_state(self.human_agent.agent_id, arena=self.arena)
             return jsonify(state)
 
         @app.route("/api/task", methods=["GET"])

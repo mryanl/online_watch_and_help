@@ -248,7 +248,7 @@ def get_args():
     parser.add_argument(
         "--display",
         type=str,
-        default="0",
+        default="1",
     )
     parser.add_argument(
         "--no_graphics",

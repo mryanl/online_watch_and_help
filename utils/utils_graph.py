@@ -432,17 +432,28 @@ class GN(GraphNode):
         actions: list[str] = []
 
         if self.is_container or self.is_surface:
-            # Furniture path
-            actions.append("walktowards")
-            if is_close:
-                if self.is_container:
-                    actions.append("close" if self.is_open else "open")
-                    if held_ids and self.is_open:
-                        actions.append("putin")
-                if self.is_surface and not self.is_container and held_ids:
-                    actions.append("putback")
-                if self.is_grabbable and can_grab_more:
-                    actions.append("grab")
+            # Furniture path — but if this node is also grabbable and has a parent
+            # (e.g. a plate that is also a surface, sitting inside a fridge),
+            # redirect the walk action to the parent rather than self.
+            if self.is_grabbable and walk_tgt is not None and walk_tgt.id != self.id:
+                parent_is_close = walk_tgt in agent.close()
+                actions.append("walktowards_parent")
+                if parent_is_close:
+                    if walk_tgt.is_container and not walk_tgt.is_open:
+                        pass
+                    elif can_grab_more:
+                        actions.append("grab")
+            else:
+                actions.append("walktowards")
+                if is_close:
+                    if self.is_container:
+                        actions.append("close" if self.is_open else "open")
+                        if held_ids and self.is_open:
+                            actions.append("putin")
+                    if self.is_surface and not self.is_container and held_ids:
+                        actions.append("putback")
+                    if self.is_grabbable and can_grab_more:
+                        actions.append("grab")
 
         elif self.is_grabbable:
             # Item
@@ -815,7 +826,7 @@ class EG(EnvironmentGraph):
 
         return obj_rooms, tgt_rooms
 
-    def gui_state(self, agent_id: int) -> dict:
+    def gui_state(self, agent_id: int, arena=None) -> dict:
         """
         Return a GUI state dict for the human agent.
 
@@ -825,6 +836,7 @@ class EG(EnvironmentGraph):
           held_objects:  [{id, class_name, instance_num}]
           items:         [GN.to_gui_dict, ...]   — grabbable objects in current room
           furniture:     [GN.to_gui_dict, ...]   — containers/surfaces in current room
+          helper:        {last_action, held_objects, agent_type}  — helper info
         """
         agent = self._node_map.get(agent_id)
         assert agent is not None, f"Agent with id {agent_id} not found in graph"
@@ -911,12 +923,50 @@ class EG(EnvironmentGraph):
             furniture.append(d)
         furniture.sort(key=lambda o: (not o["is_close"], o["class_name"], o["instance_num"]))
 
+        # Helper agent info
+        helper: dict = {"last_action": None, "held_objects": [], "agent_type": "unknown"}
+        if arena is not None:
+            try:
+                ai_agent = next(
+                    (a for a in arena.agents if a.agent_type != "Human"), None
+                )
+                if ai_agent is not None:
+                    helper["agent_type"] = ai_agent.agent_type
+                    # last action from episode history
+                    try:
+                        action_hist = arena.saver.episode_saved_info.get(
+                            "action", {}
+                        ).get(ai_agent.char_index, [])
+                        nonempty = [a for a in action_hist if a is not None]
+                        helper["last_action"] = nonempty[-1] if nonempty else None
+                    except Exception:
+                        pass
+                    # held objects from the already-built graph
+                    try:
+                        ai_node = self._node_map.get(ai_agent.agent_id)
+                        if ai_node is not None:
+                            ai_held_lh = {n.id for n in ai_node.filter_deg(Relation.HOLDS_LH, "outdeg")}
+                            ai_held_rh = {n.id for n in ai_node.filter_deg(Relation.HOLDS_RH, "outdeg")}
+                            helper["held_objects"] = [
+                                {
+                                    "id": n.id,
+                                    "class_name": n.class_name,
+                                    "instance_num": n.instance_num,
+                                    "hand": "LH" if n.id in ai_held_lh else "RH",
+                                }
+                                for n in ai_node.holds()
+                            ]
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         return {
             "current_room": current_room,
             "rooms":        rooms_list,
             "held_objects": held_objects,
             "items":        items,
             "furniture":    furniture,
+            "helper":       helper,
         }
 
     def goal_tree(self, goal, title):

@@ -1,6 +1,7 @@
 import copy
 import math
 import traceback
+import threading
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -57,9 +58,11 @@ class UnityEnvironment(BaseUnityEnvironment):
             seed=seed,
         )
         self.full_graph = None
+        self._comm_lock = threading.Lock()
 
     def get_graph(self):
-        graph = super(UnityEnvironment, self).get_graph()
+        with self._comm_lock:
+            graph = super(UnityEnvironment, self).get_graph()
         objects_seen = self.agent_object_touched
         for node in graph["nodes"]:
             if (
@@ -423,27 +426,29 @@ class UnityEnvironment(BaseUnityEnvironment):
         if len(script_list[0]) > 0:
             # print(script_list)
             if self.recording_options["recording"]:
-                success, message = self.comm.render_script(
-                    script_list,
-                    recording=True,
-                    skip_animation=False,
-                    camera_mode=self.recording_options["cameras"],
-                    file_name_prefix="task_{}".format(self.task_id),
-                    image_synthesis=self.recording_optios["modality"],
-                )
+                with self._comm_lock:
+                    success, message = self.comm.render_script(
+                        script_list,
+                        recording=True,
+                        skip_animation=False,
+                        camera_mode=self.recording_options["cameras"],
+                        file_name_prefix="task_{}".format(self.task_id),
+                        image_synthesis=self.recording_optios["modality"],
+                    )
             else:
                 if "touch" in script_list[0]:
                     objid = int(action_dict[0].split("(")[1].strip()[:-1])
                     self.agent_object_touched.append(objid)
                     success, message = True, {}
                 else:
-                    # print(colored(script_list, "yellow"))
-                    success, message = self.comm.render_script(
-                        script_list,
-                        recording=False,
-                        image_synthesis=[],
-                        skip_animation=True,
-                    )
+                    with self._comm_lock:
+                        # print(colored(script_list, "yellow"))
+                        success, message = self.comm.render_script(
+                            script_list,
+                            recording=False,
+                            image_synthesis=[],
+                            skip_animation=True,
+                        )
             if not success:
                 # ipdb.set_trace()
                 # print("NO SUCCESS")
@@ -561,7 +566,8 @@ class UnityEnvironment(BaseUnityEnvironment):
             raise NotImplementedError
 
         elif obs_type == "image":
-            return super().get_observation(agent_id, obs_type, info)
+            with self._comm_lock:
+                return super().get_observation(agent_id, obs_type, info)
             camera_ids = [
                 self.offset_cameras
                 + agent_id * self.num_camera_per_agent
@@ -579,13 +585,13 @@ class UnityEnvironment(BaseUnityEnvironment):
                 curr_obs_type = info["obs_type"]
             else:
                 curr_obs_type = self.default_obs_type
-
-            s, images = self.comm.camera_image(
-                camera_ids,
-                mode=curr_obs_type,
-                image_width=image_width,
-                image_height=image_height,
-            )
+            with self._comm_lock:
+                s, images = self.comm.camera_image(
+                    camera_ids,
+                    mode=curr_obs_type,
+                    image_width=image_width,
+                    image_height=image_height,
+                )
             if not s:
                 raise AssertionError
             return images[0]
