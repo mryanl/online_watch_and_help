@@ -239,6 +239,18 @@ def check_progress(actions):
                     grab_counter.pop(obj)
     return done_counter, grab_counter, touched_obj_ids
 
+def bbox_contains(node, pos):
+    """Return True if world position pos is inside node's bounding box."""
+    bb = node.get("bounding_box")
+    if not bb:
+        return False
+    cx, cy, cz = bb["center"]
+    sx, sy, sz = bb["size"]
+    return (
+        abs(pos[0] - cx) <= sx / 2 and
+        abs(pos[1] - cy) <= sy / 2 and
+        abs(pos[2] - cz) <= sz / 2
+    )
 
 class GN(GraphNode):
     def __init__(self, *args, **kwargs):
@@ -720,10 +732,14 @@ class EG(EnvironmentGraph):
             parsed = parse_action(action)
             predicate = parsed[0]
             match predicate:
-                case "walk":
+                case "walk" | "walktowards" | "run":
                     line = f"{name} walks to the {parsed[1]}"
-                case "walktowards":
-                    line = f"{name} walks towards the {parsed[1]}"
+                case "walkforward":
+                    line = f"{name} walks forward"
+                case "turnleft":
+                    line = f"{name} turns left"
+                case "turnright":
+                    line = f"{name} turns right"
                 case "putback":
                     prep = "on"
                     line = f"{name} puts the {parsed[1]} {prep} the {parsed[3]}"
@@ -738,6 +754,22 @@ class EG(EnvironmentGraph):
                     #     self[int(parsed[2])], "contains"
                     # )
                     # line += f" ({note})"
+                case "close":
+                    line = f"{name} closes the {parsed[1]}"
+                case "switchon":
+                    line = f"{name} switches on the {parsed[1]}"
+                case "switchoff":
+                    line = f"{name} switches off the {parsed[1]}"
+                case "sit":
+                    line = f"{name} sits on the {parsed[1]}"
+                case "standup":
+                    line = f"{name} stands up"
+                case "drink":
+                    line = f"{name} drinks from the {parsed[1]}"
+                case "touch":
+                    line = f"{name} touches the {parsed[1]}"
+                case "lookat":
+                    line = f"{name} looks at the {parsed[1]}"
                 case _:
                     raise ValueError(parsed)
             lines.append(line)

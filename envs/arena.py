@@ -1,12 +1,14 @@
 import atexit
+import pickle
 from collections import Counter
-
+from utils.utils_graph import check_progress
 
 class Arena(object):
-    def __init__(self, env, agents, saver):
+    def __init__(self, env, agents, saver, resume=False):
         self.env = env
         self.agents = agents
         self.saver = saver
+        self.resume = resume
         atexit.register(self.env.close)
 
     def reset_saver(self):
@@ -80,6 +82,7 @@ class Arena(object):
         return actions, agents_info
 
     def step(self):
+
         steps = self.env.steps
         graph = self.env.get_graph()
         obs = self.env.get_observations()
@@ -87,7 +90,25 @@ class Arena(object):
         actions, agents_info = self.get_actions(obs)
         self.saver.record_pre_step(steps, actions, agents_info, graph)
 
-        obs, reward, done, env_info = self.env.step(actions)
+        try:
+            obs, reward, done, env_info = self.env.step(actions)
+        except Exception as e:
+            if type(e).__name__ not in ("UnityCommunicationException", "UnityEngineException") or not self.resume:
+                raise
+            self.saver.warning("Unity disconnected — reconnecting with latest graph")
+            latest_graph = self.saver.episode_saved_info["graph"][-1]
+
+            grabbed_ids = set()
+            for agent_actions in self.saver.episode_saved_info["action"].values():
+                parseable = [a for a in agent_actions if a is not None]
+                _, _, touched_ids = check_progress(parseable)
+                grabbed_ids.update(touched_ids)
+
+
+            self.env.reconnect(latest_graph, grabbed_ids)
+            # Retry the same step once after reconnect
+            obs, reward, done, env_info = self.env.step(actions)
+
         self.saver.record_post_step(steps, env_info, actions)
 
         return done, env_info["finished"]

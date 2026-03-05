@@ -269,7 +269,14 @@ def get_args():
         default=False,
         help="whether to use an editor or executable",
     )
-
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help=(
+            "Resume automatically if the Unity connection is lost."
+        ),
+    )
     parser.add_argument("--portflask", type=int, default=5005)
 
     parser = add_helper_args(parser)

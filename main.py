@@ -14,7 +14,6 @@ from utils.utils_exception import check_unity_error, handle
 from utils.utils_graph import fix_graph, fix_multiple_location
 from utils.utils_logging import Saver
 
-
 class Runner:
     def __init__(self, args):
         self.args = args
@@ -22,7 +21,7 @@ class Runner:
         self._get_saver()
         self._get_agents()
         self._get_env()
-        self.arena = Arena(self.env, self.agents, self.saver)
+        self.arena = Arena(self.env, self.agents, self.saver, args.resume)
 
 
     def _get_saver(self):
@@ -179,7 +178,7 @@ class Runner:
                 file_name=self.args.executable_file,
                 x_display=self.args.display,
                 no_graphics=self.args.no_graphics,
-                timeout_wait=20,
+                timeout_wait=10,
             ),
             base_port=self.args.base_port,
         )

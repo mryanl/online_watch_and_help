@@ -3,6 +3,7 @@ import math
 import traceback
 import threading
 from contextlib import nullcontext
+import random
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -10,10 +11,10 @@ from virtualhome.simulation.environment.unity_environment import (
     UnityEnvironment as BaseUnityEnvironment,
 )
 from virtualhome.simulation.evolving_graph import utils as utils_env
-
+from virtualhome.simulation.unity_simulator.comm_unity import UnityCommunication
 from utils import utils_environment as utils
 from utils import utils_environment as utils_env2
-from utils.utils_graph import get_random_goal
+from utils.utils_graph import get_random_goal, bbox_contains
 
 
 class UnityEnvironment(BaseUnityEnvironment):
@@ -59,8 +60,8 @@ class UnityEnvironment(BaseUnityEnvironment):
             seed=seed,
         )
         self.full_graph = None
-        # self._comm_lock = threading.Lock()
-        self._comm_lock = nullcontext()
+        self._comm_lock = threading.Lock()
+        # self._comm_lock = nullcontext()
 
     def get_graph(self):
         with self._comm_lock:
@@ -343,6 +344,7 @@ class UnityEnvironment(BaseUnityEnvironment):
 
         max_id = self.max_ids[self.env_id]
 
+
         # ipdb.set_trace()
         if environment_graph is not None:
             updated_graph = environment_graph
@@ -601,3 +603,139 @@ class UnityEnvironment(BaseUnityEnvironment):
             raise NotImplementedError
 
         return updated_graph
+
+    def reconnect(self, latest_graph, grabbed_ids=None):
+        """
+        Called after a UnityCommunicationException to restart the Unity backend
+        and restore it to the state captured in latest_graph.
+        All task/goal/episode state in Python memory is preserved as-is.
+        """
+        self.port_number += 1
+        self.comm = UnityCommunication(port=str(self.port_number), **self.executable_args)
+        self.comm.reset(self.env_id)
+
+        char_ids = {
+            n["id"] for n in latest_graph["nodes"]
+            if n["class_name"] == "character"
+        }
+        clean_graph = {
+            "nodes": [n for n in latest_graph["nodes"] if n["id"] not in char_ids],
+            "edges": [
+                e for e in latest_graph["edges"]
+                if e["from_id"] not in char_ids and e["to_id"] not in char_ids
+            ],
+        }
+
+        max_id = self.max_ids[self.env_id]
+        clean_graph = utils.separate_new_ids_graph(clean_graph, max_id)
+        if self.env_id == 6:
+            cids = [node["id"] for node in clean_graph["nodes"]]
+            nodes_trash = [node for node in clean_graph["nodes"] if node["id"] == 360]
+            edges_trash = [
+                edge for edge in clean_graph["edges"]
+                if (edge["from_id"] == 360 and edge["to_id"] in cids)
+                or (edge["to_id"] == 360 and edge["from_id"] in cids)
+            ]
+            clean_graph["nodes"] += nodes_trash
+            clean_graph["edges"] += edges_trash
+
+        updated_graph = self.rescale_objects_to_place(clean_graph)
+
+        # when agents place an object inside a container, the object may be placed imporperly and may not be in the correct bounding box.
+        # In this case unity backend strips the edge between the container and the object.
+        # We detect such cases and place the object properly in the bounding box of the container.
+        if grabbed_ids:
+            grabbed_ids = {(oid - max_id + 1000) if oid > max_id else oid for oid in grabbed_ids} # by separate_new_ids_graph
+            id2node = {n["id"]: n for n in updated_graph["nodes"]}
+
+            # Find the latest edge of the object
+            placement_edges = {}
+            for edge in updated_graph["edges"]:
+                if edge["relation_type"] in ("INSIDE", "ON") and edge["from_id"] in grabbed_ids:
+                    placement_edges[edge["from_id"]] = (
+                        edge["relation_type"], edge["to_id"]
+                    )
+
+            for obj_id, (rel, container_id) in placement_edges.items():
+                obj_node = id2node.get(obj_id)
+                container_node = id2node.get(container_id)
+                if obj_node is None or container_node is None:
+                    continue
+
+                obj_pos = obj_node["obj_transform"]["position"]
+
+                if not bbox_contains(container_node, obj_pos):
+                    bb = container_node.get("bounding_box")
+                    if bb:
+                        cx, cy, cz = bb["center"]
+                        sx, sy, sz = bb["size"]
+                        new_pos = [
+                            random.uniform(cx - sx / 2, cx + sx / 2),
+                            random.uniform(cy - sy / 2, cy + sy / 2),
+                            random.uniform(cz - sz / 2, cz + sz / 2),
+                        ]
+                    else:
+                        new_pos = list(container_node["obj_transform"]["position"])
+
+                    obj_node["obj_transform"]["position"] = new_pos
+
+
+        success, m = self.comm.expand_scene(updated_graph)
+        if not success:
+            raise AssertionError(f"reconnect: expand_scene failed: {m}")
+
+        # add characters with cameras backs
+        self.num_static_cameras = self.offset_cameras = self.comm.camera_count()[1]
+
+        for i in range(self.num_agents):
+            char_id = i + 1
+            # find which room the character was in
+            room_ids = {
+                e["to_id"] for e in latest_graph["edges"]
+                if e["from_id"] == char_id and e["relation_type"] == "INSIDE"
+            }
+            room_name = next(
+                (n["class_name"] for n in latest_graph["nodes"] if n["id"] in room_ids),
+                self.init_rooms[i]
+            )
+            if i in self.agent_info:
+                self.comm.add_character(self.agent_info[i], initial_room=room_name)
+            else:
+                self.comm.add_character(initial_room=room_name)
+
+        # move each character to their saved position
+        for i in range(self.num_agents):
+            char_id = i + 1
+            char_node = next(
+                (n for n in latest_graph["nodes"] if n["id"] == char_id), None
+            )
+            if char_node is not None:
+                pos = char_node["obj_transform"]["position"]
+                self.comm.move_character(i, pos)
+
+        # restore held objects via grab actions
+        for i in range(self.num_agents):
+            char_id = i + 1
+            held_rh = [
+                e["to_id"] for e in latest_graph["edges"]
+                if e["from_id"] == char_id and e["relation_type"] == "HOLDS_RH"
+            ]
+            held_lh = [
+                e["to_id"] for e in latest_graph["edges"]
+                if e["from_id"] == char_id and e["relation_type"] == "HOLDS_LH"
+            ]
+            id2node = {n["id"]: n for n in latest_graph["nodes"]}
+
+            for obj_id in held_rh + held_lh:
+                if obj_id not in id2node:
+                    continue
+                obj_class = id2node[obj_id]["class_name"]
+                script = [f"<char{i}> [grab] <{obj_class}> ({obj_id})"]
+                self.comm.render_script(
+                    script,
+                    recording=False,
+                    image_synthesis=[],
+                    skip_animation=True,
+                )
+
+        self.changed_graph = True

@@ -1727,7 +1727,7 @@
         }
       }
 
-      async function waitForReady(timeoutSec = 10) {
+      async function waitForReady(timeoutSec = 15) {
         // Block on /api/ready until the arena has finished the step.
         // Falls back to a simple sleep if the server returns a timeout.
         try {
@@ -1735,13 +1735,13 @@
           const data = await res.json();
           if (!data.ready) {
             // Arena timed out (very long step) — just proceed with whatever state is there
-            console.warn(
-              "waitForReady: arena step timed out, continuing anyway",
-            );
+            console.warn("waitForReady: arena step timed out — reloading page");
+            window.location.reload();
           }
         } catch (e) {
           // Network error during long-poll — wait a moment and continue
-          await sleep(500);
+          console.warn(`waitForReady: network error — reloading page: ${e}`);
+          window.location.reload();
         }
       }
 
