@@ -26,36 +26,44 @@ class Runner:
 
 
     def _get_saver(self):
-        if self.args.num_agents == 1:
-            method = "single"
-        else:
-            if self.args.helper_class == "MCTS":
+        def _class_suffix(cls: str) -> str:
+            """Return a log-friendly suffix for a given agent class."""
+            if cls == "MCTS":
                 if self.args.helper_goal_type == "unknown":
-                    raise ValueError("MCTS helper cannot infer goals")
+                    raise ValueError("MCTS agent cannot infer goals (helper_goal_type='unknown')")
                 elif self.args.helper_goal_type == "gt":
-                    method_suffix = "oracle_goal"
+                    return "oracle_goal"
                 elif self.args.helper_goal_type == "random":
-                    method_suffix = "random_goal"
+                    return "random_goal"
                 else:
                     raise ValueError(f"{self.args.helper_goal_type = }")
 
-            elif self.args.helper_class == "GnP":
+            elif cls == "GnP":
                 proposer_name = self.args.autotom_proposer_name.split("/")[-1]
                 if self.args.autotom_method == "autotom":
                     estimator_name = self.args.autotom_estimator_name.split("/")[-1]
-                    method_suffix = f"autotom_Q={proposer_name}_P={estimator_name}"
+                    return f"autotom_Q={proposer_name}_P={estimator_name}"
                 elif self.args.autotom_method == "llm":
-                    method_suffix = proposer_name
+                    return proposer_name
                 else:
                     raise ValueError(f"{self.args.autotom_method = }")
 
-            elif self.args.helper_class == "Human":
-                method_suffix = "human"
+            elif cls == "Human":
+                return "human"
 
             else:
-                raise ValueError(f"{self.args.helper_class = }")
+                raise ValueError(f"Unknown agent class: {cls!r}")
 
-            method = f"{self.args.helper_class}_{method_suffix}"
+        if self.args.num_agents == 1:
+            method = "single"
+        else:
+
+            main_suffix   = _class_suffix(self.args.main_class)
+            helper_suffix = _class_suffix(self.args.helper_class)
+            method = (
+                f"main={self.args.main_class}_{main_suffix}"
+                f"__helper={self.args.helper_class}_{helper_suffix}"
+            )
 
         self.args.record_dir = (
             Path(self.args.record_dir) / self.args.dataset_path.stem / method
@@ -83,6 +91,13 @@ class Runner:
         self.env_task_set = env_task_set
 
     def _get_agents(self):
+        if self.args.num_agents > 1:
+            if self.args.main_class == "Human" and self.args.helper_class == "Human":
+                raise ValueError(
+                    "Both main_class and helper_class are set to 'Human'. "
+                    "At most one Human agent is supported."
+                )
+
         args_agent_common = dict(
             recursive=False,
             max_episode_length=20,  # MCTS:expand()
@@ -106,9 +121,14 @@ class Runner:
 
         self.agents = []
 
+        def agent_class_for(i: int) -> str:
+            return self.args.main_class if i==0 else self.args.helper_class
+
         for i in range(self.args.num_agents):
             args_agent = dict(agent_id=i + 1, char_index=i, **args_agent_common)
             args_agent["agent_params"]["obs_type"] = self.args.obs_type[i]
+
+            cls = agent_class_for(i)
 
             if self.args.debug:
                 args_agent["num_particles"] = (
@@ -122,29 +142,28 @@ class Runner:
                 args_agent["num_particles"] = num_particles
                 args_agent["num_processes"] = num_particles
 
-            if i == 0 or self.args.helper_class == "MCTS":
-                self.agents.append(MCTS_agent(**args_agent))
-            else:
-                match self.args.helper_class:
-                    case "GnP":
-                        args_agent["autotom_args"] = dict(
-                            filter_thres=self.args.autotom_thres_filter,
-                            num_particles=self.args.autotom_num_particles,
-                            proposer_name=self.args.autotom_proposer_name,
-                            estimator_name=self.args.autotom_estimator_name,
-                            method=self.args.autotom_method,
-                            hide_helper_history=self.args.autotom_hide_helper_history,
-                            disable_estimation=self.args.autotom_disable_estimation,
-                        )
-                        args_agent["agent_args"] = dict(
-                            thres_grab=self.args.gnp_thres_grab,
-                            thres_put=self.args.gnp_thres_put,
-                            start_at_put=self.args.gnp_start_at_put,
-                        )
-                        self.agents.append(GnP_agent(**args_agent))
-                    case "Human":
+            match cls:
+                case "MCTS":
+                    self.agents.append(MCTS_agent(**args_agent))
+                case "GnP":
+                    args_agent["autotom_args"] = dict(
+                        filter_thres=self.args.autotom_thres_filter,
+                        num_particles=self.args.autotom_num_particles,
+                        proposer_name=self.args.autotom_proposer_name,
+                        estimator_name=self.args.autotom_estimator_name,
+                        method=self.args.autotom_method,
+                        hide_helper_history=self.args.autotom_hide_helper_history,
+                        disable_estimation=self.args.autotom_disable_estimation,
+                    )
+                    args_agent["agent_args"] = dict(
+                        thres_grab=self.args.gnp_thres_grab,
+                        thres_put=self.args.gnp_thres_put,
+                        start_at_put=self.args.gnp_start_at_put,
+                    )
+                    self.agents.append(GnP_agent(**args_agent))
+                case "Human":
                         self.agents.append(Human_agent(**args_agent))
-                    case _:
+                case _:
                         raise ValueError(f"Invalid config: {self.args.helper_class}")
 
     def _get_env(self):
@@ -160,7 +179,7 @@ class Runner:
                 file_name=self.args.executable_file,
                 x_display=self.args.display,
                 no_graphics=self.args.no_graphics,
-                timeout_wait=30,
+                timeout_wait=20,
             ),
             base_port=self.args.base_port,
         )

@@ -9,12 +9,14 @@ from typing import Literal
 from json_repair import repair_json
 from litellm import acompletion
 from openai import OpenAIError
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, ConfigDict
 
 from utils.utils_exception import check_quota_exceeded, handle
 from utils.utils_graph import OBJECT_NAMES, TARGET_NAMES, TASK_NAMES
 from utils.utils_logging import get_existing_logger_by_prefix
 
+class StrictBaseModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 class Object(BaseModel):
     type: Literal[tuple(OBJECT_NAMES)]
@@ -303,7 +305,7 @@ LLM_PRICING = {
 }
 
 
-async def call_llm(prompt, model_slug, out_type, **kwargs):
+async def call_llm(prompt, model_slug, out_type, *, k: int = 7, **kwargs):
     # ! debug only
     if model_slug == "hosted_vllm/dummy":
         return (
@@ -316,7 +318,7 @@ async def call_llm(prompt, model_slug, out_type, **kwargs):
 
     if model_slug.startswith("gpt"):
         if model_slug == "gpt-5.2":
-            base_args = dict(temperature=0, reasoning_effort="none")
+            base_args = dict(temperature=0.0, reasoning_effort="none")
         else:
             base_args = dict(temperature=0)
     elif model_slug.startswith("o"):
@@ -340,13 +342,13 @@ async def call_llm(prompt, model_slug, out_type, **kwargs):
         # base_args = dict(temperature=0, api_key="EMPTY")
         base_args = dict(temperature=0.6, api_key="EMPTY")
         if model_slug.startswith("hosted_vllm/qwen3-4b"):
-            base_args["base_url"] = "http://localhost:6661/v1"
+            base_args["base_url"] = "http://localhost:9991/v1"
         elif model_slug.startswith("hosted_vllm/llama3-3b"):
-            base_args["base_url"] = "http://localhost:6661/v1"
+            base_args["base_url"] = "http://localhost:9991/v1"
         elif model_slug.startswith("hosted_vllm/llama3-8b"):
-            base_args["base_url"] = "http://localhost:6661/v1"
+            base_args["base_url"] = "http://localhost:9991/v1"
         elif model_slug == "hosted_vllm/qwen3-235b-fp8":
-            base_args["base_url"] = "http://localhost:6662/v1"
+            base_args["base_url"] = "http://localhost:9991/v1"
         else:
             raise ValueError(f"Invalid model_slug: {model_slug}")
     else:
@@ -362,12 +364,33 @@ async def call_llm(prompt, model_slug, out_type, **kwargs):
             )
         )
 
+    response_format = None
+    response_format_capable = out_type if out_type in (GoalParticles, GoalParticle, Likelihood) else None
+    use_structured = (
+        model_slug in ("gpt-5.2", "gemini/gemini-3-flash-preview", "hosted_vllm/qwen3-235b-fp8")
+        and response_format_capable is not None
+    )
+
+
+    failures = 0
+
     while True:
+        if response_format_capable is not None and (use_structured or failures > k):
+            use_structured = True
+            response_format = response_format_capable
+            if failures == k + 1:
+                logger.warning(
+                    "LLM validation failed %d times. Switching to structured response_format=%s",
+                    failures - 1,
+                    out_type.__name__,
+                )
+
         try:
             # https://github.com/BerriAI/litellm/issues/11657
             resp = await acompletion(
                 model=model_slug,
                 messages=[dict(role="user", content=prompt)],
+                response_format=response_format,
                 **{**base_args, **kwargs},
             )
             # * advantage of using repair_json instead of response_format:
@@ -383,13 +406,20 @@ async def call_llm(prompt, model_slug, out_type, **kwargs):
                 obj = top_probs["A"] / (top_probs["A"] + top_probs["B"])
                 pass
             else:
-                obj = repair_json(resp_text, return_objects=True)
-                if isinstance(obj, list):
-                    obj = obj[-1]  # keep the last valid json
-                obj = out_type.model_validate(obj)
+                if use_structured:
+                    obj = out_type.model_validate_json(resp_text)
+                else:
+                    obj = repair_json(resp_text, return_objects=True)
+                    if isinstance(obj, list):
+                        obj = obj[-1]  # keep the last valid json
+                    obj = out_type.model_validate(obj)
                 if out_type == GoalParticle:
                     obj = GoalParticles(particles=[obj])
             break
+        except ValidationError as e:
+            failures += 1
+            logger = get_existing_logger_by_prefix("main")
+            handle(e, logger, allow=ValidationError)
         except Exception as e:
             e = check_quota_exceeded(e)
             logger = get_existing_logger_by_prefix("main")  # multi-process compatible

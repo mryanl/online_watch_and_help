@@ -1899,11 +1899,6 @@
           if (!isSubmitting) refreshImage();
         }, 3000);
 
-        // State poll every 1s
-        setInterval(() => {
-          if (!isSubmitting) refreshState();
-        }, 1000);
-
         // Task poll every 5s
         setInterval(() => {
           if (!isSubmitting) refreshTask();

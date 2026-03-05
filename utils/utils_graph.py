@@ -552,8 +552,9 @@ class Subgoal:
     @property
     def natlang(self):
         obj_name = self.obj_nodes[0].class_name
-        tgt_name = self.tgt_nodes[0].class_name
-        return f"Put {self.cnt} {obj_name} {self.prep} the {tgt_name}"
+        tgt = self.tgt_nodes[0]
+        tgt_label = f"{tgt.class_name}.{tgt.instance_num}"
+        return f"Put {self.cnt} {obj_name} {self.prep} the {tgt_label}"
 
 
 class Goal:

@@ -2,6 +2,13 @@ import argparse
 
 def add_helper_args(parser):
     parser.add_argument(
+        "--main_class",
+        type=str,
+        default="MCTS",
+        choices=["MCTS", "GnP", "Human"],
+        help="The class of the main agent (agent 0 / char_index 0)",
+    )
+    parser.add_argument(
         "--helper_class",
         type=str,
         default="MCTS",

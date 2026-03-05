@@ -2,6 +2,7 @@ import copy
 import math
 import traceback
 import threading
+from contextlib import nullcontext
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -58,7 +59,8 @@ class UnityEnvironment(BaseUnityEnvironment):
             seed=seed,
         )
         self.full_graph = None
-        self._comm_lock = threading.Lock()
+        # self._comm_lock = threading.Lock()
+        self._comm_lock = nullcontext()
 
     def get_graph(self):
         with self._comm_lock:
