@@ -92,13 +92,3 @@ class Human_agent:
             return []
         return self.saver.episode_saved_info["action"][self.char_index]
 
-
-    def get_progress(self) -> dict:
-        actions = self.get_action_history()
-        parseable = [a for a in actions if a is not None]
-        done_counter, grab_counter, touched_ids = check_progress(parseable)
-        return {
-            "done": dict(done_counter),
-            "holding": dict(grab_counter),
-            "touched_ids": list(touched_ids),
-        }

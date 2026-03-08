@@ -46,6 +46,7 @@ class UnityEnvironment(BaseUnityEnvironment):
 
         self.convert_goal = convert_goal
         self.task_goal, self.goal_spec = {0: {}, 1: {}}, {0: {}, 1: {}}
+        self.initial_task_goal = self.task_goal
         self.env_task_set = env_task_set
         self.agent_object_touched = []
         super(UnityEnvironment, self).__init__(
@@ -260,6 +261,7 @@ class UnityEnvironment(BaseUnityEnvironment):
         self.init_graph = copy.deepcopy(env_task["init_graph"])
         self.init_rooms = env_task["init_rooms"]
         self.task_goal = env_task["task_goal"]
+        self.initial_task_goal = copy.deepcopy(self.task_goal)
         if helper_goal_type == "gt":
             self.task_goal[1] = self.task_goal[0]
         elif helper_goal_type == "random":
@@ -618,67 +620,20 @@ class UnityEnvironment(BaseUnityEnvironment):
             n["id"] for n in latest_graph["nodes"]
             if n["class_name"] == "character"
         }
+
         clean_graph = {
             "nodes": [n for n in latest_graph["nodes"] if n["id"] not in char_ids],
             "edges": [
                 e for e in latest_graph["edges"]
-                if e["from_id"] not in char_ids and e["to_id"] not in char_ids
+                if e["from_id"] not in char_ids and e["to_id"] not in char_ids and e["relation_type"] not in ("HOLDS_RH", "HOLDS_LH")
             ],
         }
 
+
+        clean_graph = self.fix_grabbed_object_positions(clean_graph, grabbed_ids)
+
         max_id = self.max_ids[self.env_id]
-        clean_graph = utils.separate_new_ids_graph(clean_graph, max_id)
-        if self.env_id == 6:
-            cids = [node["id"] for node in clean_graph["nodes"]]
-            nodes_trash = [node for node in clean_graph["nodes"] if node["id"] == 360]
-            edges_trash = [
-                edge for edge in clean_graph["edges"]
-                if (edge["from_id"] == 360 and edge["to_id"] in cids)
-                or (edge["to_id"] == 360 and edge["from_id"] in cids)
-            ]
-            clean_graph["nodes"] += nodes_trash
-            clean_graph["edges"] += edges_trash
-
-        updated_graph = self.rescale_objects_to_place(clean_graph)
-
-        # when agents place an object inside a container, the object may be placed imporperly and may not be in the correct bounding box.
-        # In this case unity backend strips the edge between the container and the object.
-        # We detect such cases and place the object properly in the bounding box of the container.
-        if grabbed_ids:
-            grabbed_ids = {(oid - max_id + 1000) if oid > max_id else oid for oid in grabbed_ids} # by separate_new_ids_graph
-            id2node = {n["id"]: n for n in updated_graph["nodes"]}
-
-            # Find the latest edge of the object
-            placement_edges = {}
-            for edge in updated_graph["edges"]:
-                if edge["relation_type"] in ("INSIDE", "ON") and edge["from_id"] in grabbed_ids:
-                    placement_edges[edge["from_id"]] = (
-                        edge["relation_type"], edge["to_id"]
-                    )
-
-            for obj_id, (rel, container_id) in placement_edges.items():
-                obj_node = id2node.get(obj_id)
-                container_node = id2node.get(container_id)
-                if obj_node is None or container_node is None:
-                    continue
-
-                obj_pos = obj_node["obj_transform"]["position"]
-
-                if not bbox_contains(container_node, obj_pos):
-                    bb = container_node.get("bounding_box")
-                    if bb:
-                        cx, cy, cz = bb["center"]
-                        sx, sy, sz = bb["size"]
-                        new_pos = [
-                            random.uniform(cx - sx / 2, cx + sx / 2),
-                            random.uniform(cy - sy / 2, cy + sy / 2),
-                            random.uniform(cz - sz / 2, cz + sz / 2),
-                        ]
-                    else:
-                        new_pos = list(container_node["obj_transform"]["position"])
-
-                    obj_node["obj_transform"]["position"] = new_pos
-
+        updated_graph = utils.separate_new_ids_graph(clean_graph, max_id)
 
         success, m = self.comm.expand_scene(updated_graph)
         if not success:
@@ -713,29 +668,161 @@ class UnityEnvironment(BaseUnityEnvironment):
                 pos = char_node["obj_transform"]["position"]
                 self.comm.move_character(i, pos)
 
-        # restore held objects via grab actions
+        _, new_graph = self.comm.environment_graph()
+        self.restore_held_objects(latest_graph, new_graph)
+
+        self.changed_graph = True
+        self.update_goal(graph=new_graph)
+        pass
+
+    def fix_grabbed_object_positions(self, clean_graph, grabbed_ids):
+        """
+        When agents place an object inside a container or on a surface, the object
+        may be placed improperly and outside the correct bounding box. In this case
+        the Unity backend strips the edge between the container/surface and the object.
+        We detect such cases and place the object properly within the bounding box.
+        For INSIDE: randomize x, y, z within the bounding box.
+        For ON: randomize only x and z (horizontal), keep y (vertical) unchanged.
+        """
+        if not grabbed_ids:
+            return clean_graph
+
+        id2node = {n["id"]: n for n in clean_graph["nodes"]}
+
+        # Find the placement edge (INSIDE or ON) for each grabbed object
+        placement_edges = {}
+        for edge in clean_graph["edges"]:
+            if (edge["relation_type"] in ("INSIDE", "ON")
+                and edge["from_id"] in grabbed_ids
+                and id2node.get(edge["to_id"], {}).get("category") not in
+                    {"Rooms", "Walls", "Floor", "Ceiling", "Doors", "Windows"}):
+                placement_edges[edge["from_id"]] = (
+                    edge["relation_type"], edge["to_id"]
+                )
+
+        for obj_id, (rel, container_id) in placement_edges.items():
+            obj_node = id2node.get(obj_id)
+            container_node = id2node.get(container_id)
+            if obj_node is None or container_node is None:
+                continue
+
+            obj_pos = obj_node["obj_transform"]["position"]
+
+            if not bbox_contains(container_node, obj_pos):
+                bb = container_node.get("bounding_box")
+                if bb:
+                    cx, cy, cz = bb["center"]
+                    sx, sy, sz = bb["size"]
+                    if rel == "INSIDE":
+                        new_pos = [
+                            random.uniform(cx - sx / 2, cx + sx / 2),
+                            random.uniform(cy - sy / 2, cy + sy / 2),
+                            random.uniform(cz - sz / 2, cz + sz / 2),
+                        ]
+                    else:  # ON — only randomize x and z, preserve y
+                        new_pos = [
+                            random.uniform(cx - sx / 2, cx + sx / 2),
+                            obj_pos[1],
+                            random.uniform(cz - sz / 2, cz + sz / 2),
+                        ]
+                else:
+                    new_pos = list(container_node["obj_transform"]["position"])
+
+                obj_class = obj_node["class_name"]
+                container_class = container_node["class_name"]
+                print(
+                    f"fix_grabbed_object_positions: moved {obj_class} ({obj_id}) "
+                    f"{rel} {container_class} ({container_id}) "
+                    f"from {[round(v, 3) for v in obj_pos]} "
+                    f"to {[round(v, 3) for v in new_pos]}"
+                )
+                obj_node["obj_transform"]["position"] = new_pos
+            else:
+                obj_class = obj_node["class_name"]
+                container_class = container_node["class_name"]
+                print(
+                    f"fix_grabbed_object_positions: {obj_class} ({obj_id}) "
+                    f"{rel} {container_class} ({container_id}) already within bbox, no change"
+                )
+
+        return clean_graph
+
+    def restore_held_objects(self, latest_graph, new_graph):
+        """
+        After reconnection, restore held objects for each agent by grabbing the
+        closest object of the same class to the agent's position in the new graph.
+        Uses class name + proximity instead of object ID since IDs may have changed.
+        """
+        id2node = {n["id"]: n for n in latest_graph["nodes"]}
+
         for i in range(self.num_agents):
             char_id = i + 1
-            held_rh = [
-                e["to_id"] for e in latest_graph["edges"]
-                if e["from_id"] == char_id and e["relation_type"] == "HOLDS_RH"
-            ]
-            held_lh = [
-                e["to_id"] for e in latest_graph["edges"]
-                if e["from_id"] == char_id and e["relation_type"] == "HOLDS_LH"
-            ]
-            id2node = {n["id"]: n for n in latest_graph["nodes"]}
 
-            for obj_id in held_rh + held_lh:
-                if obj_id not in id2node:
+            char_node = next(
+                (n for n in latest_graph["nodes"] if n["id"] == char_id), None
+            )
+            if char_node is None:
+                continue
+            char_pos = char_node["obj_transform"]["position"]
+
+            held_ids = [
+                e["to_id"] for e in latest_graph["edges"]
+                if e["from_id"] == char_id
+                and e["relation_type"] in ("HOLDS_RH", "HOLDS_LH")
+            ]
+
+            held_classes = [
+                id2node[oid]["class_name"]
+                for oid in held_ids
+                if oid in id2node
+            ]
+
+            already_grabbed = set()
+
+            for obj_class in held_classes:
+                candidates = [
+                    n for n in new_graph["nodes"]
+                    if n["class_name"] == obj_class
+                    and n["id"] not in already_grabbed
+                ]
+                if not candidates:
                     continue
-                obj_class = id2node[obj_id]["class_name"]
-                script = [f"<char{i}> [grab] <{obj_class}> ({obj_id})"]
-                self.comm.render_script(
+
+                def dist(n):
+                    p = n["obj_transform"]["position"]
+                    return sum((a - b) ** 2 for a, b in zip(char_pos, p))
+
+                closest = min(candidates, key=dist)
+                already_grabbed.add(closest["id"])
+
+                script = [f"<char{i}> [grab] <{obj_class}> ({closest['id']})"]
+                result = self.comm.render_script(
                     script,
                     recording=False,
                     image_synthesis=[],
                     skip_animation=True,
                 )
+                print(f"grab restore char{i} {obj_class} ({closest['id']}): {result}")
 
-        self.changed_graph = True
+    def update_goal(self, graph=None):
+        if graph is None:
+            graph = self.get_graph()
+        if self.convert_goal:
+            self.task_goal = {
+                agent_id: utils_env2.convert_goal(task_goal, graph)
+                for agent_id, task_goal in self.initial_task_goal.items()
+            }
+            self.goal_spec = {
+                agent_id: self.get_goal2(
+                    self.task_goal[agent_id], self.agent_goals[agent_id]
+                )
+                for agent_id in range(self.num_agents)
+            }
+
+        else:
+            self.goal_spec = {
+                agent_id: self.get_goal(
+                    self.task_goal[agent_id], self.agent_goals[agent_id]
+                )
+                for agent_id in range(self.num_agents)
+            }

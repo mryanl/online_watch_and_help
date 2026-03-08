@@ -2,10 +2,14 @@ import atexit
 import pickle
 from collections import Counter
 from utils.utils_graph import check_progress
+from typing import TYPE_CHECKING
+from utils import utils_environment as utils_env2
 
+if TYPE_CHECKING:
+    from envs.unity_environment import UnityEnvironment
 class Arena(object):
     def __init__(self, env, agents, saver, resume=False):
-        self.env = env
+        self.env: UnityEnvironment = env
         self.agents = agents
         self.saver = saver
         self.resume = resume
@@ -108,6 +112,7 @@ class Arena(object):
             self.env.reconnect(latest_graph, grabbed_ids)
             # Retry the same step once after reconnect
             obs, reward, done, env_info = self.env.step(actions)
+
 
         self.saver.record_post_step(steps, env_info, actions)
 

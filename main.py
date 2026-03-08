@@ -178,7 +178,7 @@ class Runner:
                 file_name=self.args.executable_file,
                 x_display=self.args.display,
                 no_graphics=self.args.no_graphics,
-                timeout_wait=10,
+                timeout_wait=7,
             ),
             base_port=self.args.base_port,
         )

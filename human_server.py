@@ -150,17 +150,11 @@ class HumanServer:
                   "label": str       ← human-readable description
                 }, ...
               },
-              "progress": {
-                "done":    {"<obj_class>": int, ...},
-                "holding": {"<obj_class>": int, ...}
-              },
               "episode_done": bool,
               "episode_id": int,
               "total_episodes": int
             }
             """
-            progress = self.human_agent.get_progress()
-
             task_info = {
             "task_name": self.env.task_name,
             "task_id": self.env.task_id,
@@ -190,7 +184,6 @@ class HumanServer:
                 **task_info,
                 "max_steps": getattr(self.env, "max_episode_length", 0),
                 "goals": goals_out,
-                "progress": progress,
                 "episode_done": False,
                 "episode_id": self.arena.saver.episode_id,
                 "total_episodes": len(self.args.episode_ids)
