@@ -362,6 +362,47 @@
         display: block;
       }
 
+      /* ── Apartment layout minimap ──────────────────────────────────── */
+      #layout-minimap {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 200px;
+        height: 200px;
+        border: 1.5px solid rgba(79, 142, 247, 0.55);
+        border-radius: 4px;
+        background: rgba(13, 15, 20, 0.75);
+        overflow: hidden;
+        z-index: 10;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+        transition: opacity 0.2s;
+        cursor: default;
+      }
+      #layout-minimap:hover {
+        opacity: 0.35;
+      }
+      #layout-minimap img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      #layout-minimap-label {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(13, 15, 20, 0.7);
+        font-family: var(--mono);
+        font-size: 8px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        text-align: center;
+        padding: 2px 0;
+        pointer-events: none;
+      }
+
       #image-overlay {
         position: absolute;
         inset: 0;
@@ -963,6 +1004,11 @@
         <div id="image-container">
           <img id="main-image" src="" alt="Agent viewport" />
           <div id="image-overlay">Waiting for frame…</div>
+          <!-- Apartment layout minimap (top-right corner) -->
+          <div id="layout-minimap">
+            <img id="layout-image" src="" alt="Apartment layout" />
+            <div id="layout-minimap-label">Layout</div>
+          </div>
         </div>
       </section>
 
@@ -1107,12 +1153,22 @@
           const container = document.getElementById("image-container");
           const w = Math.min(container.clientWidth || MAX_W, MAX_W);
           const h = Math.min(container.clientHeight || MAX_H, MAX_H);
-          const { images } = await apiGet(`/api/image?width=${w}&height=${h}`);
+          const { images, layout } = await apiGet(
+            `/api/image?width=${w}&height=${h}`,
+          );
           const img = document.getElementById("main-image");
           const overlay = document.getElementById("image-overlay");
           if (images && images.length > 0) {
             img.src = "data:image/jpeg;base64," + images[0];
             overlay.classList.add("hidden");
+          }
+          const layoutImg = document.getElementById("layout-image");
+          const minimap = document.getElementById("layout-minimap");
+          if (layout) {
+            layoutImg.src = "data:image/jpeg;base64," + layout;
+            minimap.style.display = "";
+          } else {
+            minimap.style.display = "none";
           }
         } catch (e) {
           /* image fetch failed silently — env may not be ready */

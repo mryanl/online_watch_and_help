@@ -4,7 +4,7 @@ import traceback
 import threading
 from contextlib import nullcontext
 import random
-
+from collections import defaultdict, Counter
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 from virtualhome.simulation.environment.unity_environment import (
@@ -18,6 +18,7 @@ from utils.utils_graph import get_random_goal, bbox_contains
 
 
 class UnityEnvironment(BaseUnityEnvironment):
+    STATEFUL_FURNITURE = {"fridge", "dishwasher", "stove"}
     def __init__(
         self,
         num_agents=2,
@@ -606,7 +607,7 @@ class UnityEnvironment(BaseUnityEnvironment):
 
         return updated_graph
 
-    def reconnect(self, latest_graph, grabbed_ids=None):
+    def reconnect(self, latest_graph, grabbed_classes=None):
         """
         Called after a UnityCommunicationException to restart the Unity backend
         and restore it to the state captured in latest_graph.
@@ -630,10 +631,11 @@ class UnityEnvironment(BaseUnityEnvironment):
         }
 
 
-        clean_graph = self.fix_grabbed_object_positions(clean_graph, grabbed_ids)
+        clean_graph, on_intents = self.fix_grabbed_object_positions(clean_graph, grabbed_classes)
 
         max_id = self.max_ids[self.env_id]
         updated_graph = utils.separate_new_ids_graph(clean_graph, max_id)
+        to_reopen = self.force_furniture_closed(updated_graph)
 
         success, m = self.comm.expand_scene(updated_graph)
         if not success:
@@ -668,84 +670,91 @@ class UnityEnvironment(BaseUnityEnvironment):
                 pos = char_node["obj_transform"]["position"]
                 self.comm.move_character(i, pos)
 
+        self.reopen_furniture(to_reopen)
         _, new_graph = self.comm.environment_graph()
         self.restore_held_objects(latest_graph, new_graph)
+        self.restore_on_objects(on_intents, new_graph, char_idx=0)
 
         self.changed_graph = True
         self.update_goal(graph=new_graph)
         pass
 
-    def fix_grabbed_object_positions(self, clean_graph, grabbed_ids):
+    def fix_grabbed_object_positions(self, clean_graph, grabbed_classes):
         """
-        When agents place an object inside a container or on a surface, the object
-        may be placed improperly and outside the correct bounding box. In this case
-        the Unity backend strips the edge between the container/surface and the object.
-        We detect such cases and place the object properly within the bounding box.
-        For INSIDE: randomize x, y, z within the bounding box.
-        For ON: randomize only x and z (horizontal), keep y (vertical) unchanged.
+        For objects whose class name is in grabbed_classes (currently grabbed by an
+        agent since the last reconnect):
+          - INSIDE: randomize position within the container's bounding box so
+                    Unity accepts the placement via expand_scene.
+          - ON: collect a placement intent to be replayed after expand_scene via
+                restore_on_objects (grab + put), since position-only fixes are
+                unreliable for surface placements. Only goal-class objects are restored.
+        Returns (clean_graph, on_intents).
         """
-        if not grabbed_ids:
-            return clean_graph
+        if not grabbed_classes:
+            return clean_graph, defaultdict(list)
 
         id2node = {n["id"]: n for n in clean_graph["nodes"]}
 
         # Find the placement edge (INSIDE or ON) for each grabbed object
         placement_edges = {}
         for edge in clean_graph["edges"]:
+            from_node = id2node.get(edge["from_id"], {})
             if (edge["relation_type"] in ("INSIDE", "ON")
-                and edge["from_id"] in grabbed_ids
+                and from_node.get("class_name") in grabbed_classes
                 and id2node.get(edge["to_id"], {}).get("category") not in
                     {"Rooms", "Walls", "Floor", "Ceiling", "Doors", "Windows"}):
                 placement_edges[edge["from_id"]] = (
                     edge["relation_type"], edge["to_id"]
                 )
 
+        on_intents = defaultdict(list)
         for obj_id, (rel, container_id) in placement_edges.items():
             obj_node = id2node.get(obj_id)
             container_node = id2node.get(container_id)
             if obj_node is None or container_node is None:
                 continue
 
-            obj_pos = obj_node["obj_transform"]["position"]
+            obj_class = obj_node["class_name"]
+            container_class = container_node["class_name"]
 
-            if not bbox_contains(container_node, obj_pos):
-                bb = container_node.get("bounding_box")
-                if bb:
-                    cx, cy, cz = bb["center"]
-                    sx, sy, sz = bb["size"]
-                    if rel == "INSIDE":
+            if rel == "INSIDE":
+
+                obj_pos = obj_node["obj_transform"]["position"]
+
+                if not bbox_contains(container_node, obj_pos):
+                    bb = container_node.get("bounding_box")
+                    if bb:
+                        cx, cy, cz = bb["center"]
+                        sx, sy, sz = bb["size"]
                         new_pos = [
                             random.uniform(cx - sx / 2, cx + sx / 2),
                             random.uniform(cy - sy / 2, cy + sy / 2),
                             random.uniform(cz - sz / 2, cz + sz / 2),
                         ]
-                    else:  # ON — only randomize x and z, preserve y
-                        new_pos = [
-                            random.uniform(cx - sx / 2, cx + sx / 2),
-                            obj_pos[1],
-                            random.uniform(cz - sz / 2, cz + sz / 2),
-                        ]
+                    else:
+                        new_pos = list(container_node["obj_transform"]["position"])
+                    print(
+                        f"fix_grabbed_object_positions: moved {obj_class} ({obj_id}) "
+                        f"INSIDE {container_class} ({container_id}) "
+                        f"from {[round(v, 3) for v in obj_pos]} "
+                        f"to {[round(v, 3) for v in new_pos]}"
+                    )
+                    obj_node["obj_transform"]["position"] = new_pos
                 else:
-                    new_pos = list(container_node["obj_transform"]["position"])
-
-                obj_class = obj_node["class_name"]
-                container_class = container_node["class_name"]
+                    print(
+                        f"fix_grabbed_object_positions: {obj_class} ({obj_id}) "
+                        f"INSIDE {container_class} ({container_id}) already within bbox, no change"
+                    )
+            elif rel == "ON":
+                container_pos = tuple(container_node["obj_transform"]["position"])
+                obj_pos = obj_node["obj_transform"]["position"]
+                on_intents[(container_class, container_pos)].append((obj_class, obj_pos))
                 print(
-                    f"fix_grabbed_object_positions: moved {obj_class} ({obj_id}) "
-                    f"{rel} {container_class} ({container_id}) "
-                    f"from {[round(v, 3) for v in obj_pos]} "
-                    f"to {[round(v, 3) for v in new_pos]}"
-                )
-                obj_node["obj_transform"]["position"] = new_pos
-            else:
-                obj_class = obj_node["class_name"]
-                container_class = container_node["class_name"]
-                print(
-                    f"fix_grabbed_object_positions: {obj_class} ({obj_id}) "
-                    f"{rel} {container_class} ({container_id}) already within bbox, no change"
+                    f"fix_grabbed_object_positions: will restore {obj_class} "
+                    f"ON {container_class} @ {[round(v, 3) for v in container_pos]}"
                 )
 
-        return clean_graph
+        return clean_graph, on_intents
 
     def restore_held_objects(self, latest_graph, new_graph):
         """
@@ -804,6 +813,76 @@ class UnityEnvironment(BaseUnityEnvironment):
                 )
                 print(f"grab restore char{i} {obj_class} ({closest['id']}): {result}")
 
+    def restore_on_objects(self, on_intents, new_graph, char_idx=0):
+        def pos_dist_sq(a, b):
+            return sum((x - y) ** 2 for x, y in zip(a, b))
+        holds_relations = {"HOLDS_RH", "HOLDS_LH"}
+        id2node = {n["id"]: n for n in new_graph["nodes"]}
+        on_edges = defaultdict(Counter)
+        obj_ids_with_on = set()
+        for edge in new_graph["edges"]:
+            if edge["relation_type"] == "ON":
+                obj_node = id2node.get(edge["from_id"])
+                if obj_node:
+                    on_edges[edge["to_id"]][obj_node["class_name"]] += 1
+                    obj_ids_with_on.add(edge["from_id"])
+            if edge["relation_type"] in holds_relations:
+                obj_ids_with_on.add(edge["to_id"])
+
+        for (container_class, saved_container_pos), items in on_intents.items():
+            container_candidates = [
+                n for n in new_graph["nodes"]
+                if n["class_name"] == container_class
+                and pos_dist_sq(n["obj_transform"]["position"], saved_container_pos) <= 1.0
+            ]
+            if not container_candidates:
+                print(f"restore_on_objects: no {container_class} within 1m of {saved_container_pos}, skipping")
+                continue
+            container_node = min(container_candidates, key=lambda n: pos_dist_sq(n["obj_transform"]["position"], saved_container_pos))
+            container_id = container_node["id"]
+            container_pos = container_node["obj_transform"]["position"]
+
+            needed = Counter(obj_class for obj_class, _ in items)
+            already = on_edges[container_id]
+            for obj_class, count_needed in needed.items():
+                deficit = count_needed - already[obj_class]
+                if deficit <= 0:
+                    print(f"restore_on_objects: {obj_class} x{count_needed} already ON {container_class} ({container_id}), skipping")
+                    continue
+
+                # 3. Find the `deficit` closest unplaced objects within 1 metre.
+                obj_candidates = [
+                    n for n in new_graph["nodes"]
+                    if n["class_name"] == obj_class
+                    and n["id"] not in obj_ids_with_on
+                    and pos_dist_sq(n["obj_transform"]["position"], container_pos) <= 1.0
+                ]
+                obj_candidates.sort(key=lambda n: pos_dist_sq(n["obj_transform"]["position"], container_pos))
+
+                if not obj_candidates:
+                    print(f"restore_on_objects: no {obj_class} within 1m of {container_class} ({container_id}), skipping")
+                    continue
+
+                for chosen in obj_candidates[:deficit]:
+
+                    char_tag = f"<char{char_idx}>"
+                    walk_script  = f"{char_tag} [walk] <{container_class}> ({container_id})"
+                    grab_script  = f"{char_tag} [grab] <{obj_class}> ({chosen['id']})"
+                    place_script = f"{char_tag} [put] <{obj_class}> ({chosen['id']}) <{container_class}> ({container_id})"
+                    for script_line in [walk_script, grab_script, place_script]:
+                        ok, msg = self.comm.render_script(
+                            [script_line],
+                            recording=False,
+                            image_synthesis=[],
+                            skip_animation=True,
+                        )
+                        print(f"restore_on_objects: {script_line!r} -> ok={ok}, msg={msg}")
+                        if not ok:
+                            print(f"restore_on_objects: step failed, aborting this object")
+                            break
+
+                    obj_ids_with_on.add(chosen['id'])
+
     def update_goal(self, graph=None):
         if graph is None:
             graph = self.get_graph()
@@ -826,3 +905,33 @@ class UnityEnvironment(BaseUnityEnvironment):
                 )
                 for agent_id in range(self.num_agents)
             }
+
+    def force_furniture_closed(self, updated_graph):
+        """
+        Mutates updated_graph in-place: forces all STATEFUL_FURNITURE nodes that
+        are OPEN to CLOSED before passing the graph to expand_scene.
+        Returns a list of (id, class_name) for nodes that need to be re-opened
+        after expand_scene via reopen_furniture().
+        """
+        to_reopen = []
+        for node in updated_graph["nodes"]:
+            if node["class_name"].lower() in self.STATEFUL_FURNITURE:
+                if "OPEN" in [s.upper() for s in node["states"]]:
+                    to_reopen.append((node["id"], node["class_name"]))
+                    node["states"] = [s for s in node["states"] if s.upper() != "OPEN"]
+                    node["states"].append("CLOSED")
+        return to_reopen
+
+    def reopen_furniture(self, to_reopen):
+        """
+        After expand_scene and characters have been added, re-open furniture that
+        was open before reconnect by issuing [open] scripts via char0.
+        to_reopen is the list returned by force_furniture_closed().
+        """
+        for node_id, class_name in to_reopen:
+            script = f"<char0> [open] <{class_name}> ({node_id})"
+            s, msg = self.comm.render_script([script], recording=False, skip_animation=True)
+            if not s:
+                print(f"reconnect: failed to re-open {class_name} ({node_id}): {msg}")
+            else:
+                print(f"reconnect: re-opened {class_name} ({node_id})")

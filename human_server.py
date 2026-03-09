@@ -192,17 +192,20 @@ class HumanServer:
         @app.route("/api/image", methods=["GET"])
         def api_image():
             """
-            Returns camera images for the human agent's viewpoint.
+            Returns camera images for the human agent's viewpoint plus the
+            full apartment layout overview.
 
             Response:
             {
-              "images": ["<base64-jpeg>", ...]
+              "images": ["<base64-jpeg>", ...],  ← index 0: third-behind view
+              "layout": "<base64-jpeg>" | null    ← apartment overview (camera -1)
             }
             """
             width = int(request.args.get("width", 400))
             height = int(request.args.get("height", 225))
 
             images_b64: list[str] = []
+            layout_b64 = None
             try:
                 obs = self.env.get_observation(
                     agent_id=self.human_agent.char_index,
@@ -216,9 +219,24 @@ class HumanServer:
                 if obs is not None:
                     images_b64.append(_encode_image(obs))
             except Exception as e:
-                self.app.logger.warning(f"/api/image failed: {e}")
+                self.app.logger.warning(f"/api/image (agent view) failed: {e}")
 
-            return jsonify({"images": images_b64})
+            try:
+                obs = self.env.get_observation(
+                    agent_id=self.human_agent.char_index,
+                    obs_type="image",
+                    info=dict(
+                        view="full_layout",
+                        image_width=200,
+                        image_height=200,
+                    ),
+                )
+                if obs is not None:
+                    layout_b64 = _encode_image(obs)
+            except Exception as e:
+                self.app.logger.warning(f"/api/image (layout) failed: {e}")
+
+            return jsonify({"images": images_b64, "layout": layout_b64})
 
 
         @app.route("/api/action", methods=["POST"])
